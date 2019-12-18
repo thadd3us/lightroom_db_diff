@@ -3,7 +3,7 @@
 Example command line:
 
 python3 db_diff.py \
-    --db1 "/Users/thadh/Google Drive/Lightroom Backups/2019-11-11 0637/Lightroom Catalog-2-3.lrcat" \
+    --db1 "/Users/thadh/Google Drive/Lightroom Backups/Lightroom Backups - contain lost metadata/2014-06-19 1511/Lightroom 5 Catalog.lrcat" \
     --db2 "/Users/thadh/Google Drive/Lightroom Backups/2019-11-24 1444/Lightroom Catalog-2-3.lrcat" \
     --alsologtostderr
 """
@@ -21,6 +21,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('db1', None, 'First database.')
 flags.DEFINE_string('db2', None, 'Second database.')
 
+MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3.lrcat'
 
 QUERY_CAPTIONS = """
 SELECT
@@ -35,7 +36,7 @@ LEFT JOIN AgLibraryIPTC ON AgLibraryIPTC.image = Adobe_images.id_local
 class LightroomDb(object):
   
   def __init__(self):
-    self.captions_df = None
+    self.images_df = None
 
   
 def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
@@ -50,21 +51,46 @@ def load_db(path: Text):
   connection = sqlite3.connect(path)
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
-  lightroom_db.captions_df = query_to_data_frame(cursor, QUERY_CAPTIONS)
-  lightroom_db.captions_df.loc[lightroom_db.captions_df.caption == '', 'caption'] = None
+  lightroom_db.images_df = query_to_data_frame(cursor, QUERY_CAPTIONS)
+  lightroom_db.images_df.loc[lightroom_db.images_df.caption == '', 'caption'] = None
   return lightroom_db
 
 
+VACUOUS_CAPTIONS = set([
+  '',
+  'OLYMPUS DIGITAL CAMERA',
+  'Exif JPEG',
+])
+
 def diff_captions(db1: LightroomDb, db2: LightroomDb):
-  joined_df = db1.captions_df.merge(db2.captions_df, how='outer', on='image', suffixes=('_db1', '_db2'))
+  joined_df = db1.images_df.merge(db2.images_df, how='outer', on='image', suffixes=('_db1', '_db2'))
+
+  IMAGE_COLS = ['pathFromRoot_db1', 'originalFilename_db1']
+
+  image_removed = pd.isna(joined_df.pathFromRoot_db2)
+  print('SUMMARY: image_removed, n=%d' % sum(image_removed))
+  if sum(image_removed) > 0:
+    print(joined_df[image_removed].pathFromRoot_db1.value_counts(dropna=False))
+  print()
+
   caption_1 = joined_df.caption_db1.fillna('')
   caption_2 = joined_df.caption_db2.fillna('')
-  caption_altered = (caption_1 != caption_2)
+  caption_removed = (caption_1 != '') & (caption_2 == '') & (~image_removed )
+  caption_removed &= ~caption_1.isin(VACUOUS_CAPTIONS)
+  print('SUMMARY: caption_removed, n=%d' % sum(caption_removed))
+  if sum(caption_removed) > 0:
+    print(joined_df[caption_removed].pathFromRoot_db1.value_counts(dropna=False))
+  print()
+  
+  caption_altered = (caption_1 != caption_2) & ~caption_removed & ~image_removed
+  caption_altered &= ~caption_1.isin(VACUOUS_CAPTIONS)
+  print('SUMMARY: caption_altered n=%d' % sum(caption_altered))
   if sum(caption_altered) > 0:
-    print('caption_altered count=%d' % len(caption_altered.index))
-    IMAGE_COLS = ['pathFromRoot_db1', 'originalFilename_db1']
-    print(joined_df[caption_altered][IMAGE_COLS + ['caption_db1', 'caption_db2']])
-      
+    print(joined_df[caption_altered].pathFromRoot_db1.value_counts(dropna=False))
+  print()
+   
+  return (image_removed, caption_removed, caption_altered)
+
 
 def main(argv):
   if len(argv) > 1:
