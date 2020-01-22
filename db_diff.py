@@ -6,6 +6,14 @@ python3 db_diff.py \
     --db1 "/Users/thadh/Google Drive/Lightroom Backups/Lightroom Backups - contain lost metadata/2014-06-19 1511/Lightroom 5 Catalog.lrcat" \
     --db2 "/Users/thadh/Google Drive/Lightroom Backups/2019-11-24 1444/Lightroom Catalog-2-3.lrcat" \
     --alsologtostderr
+
+TODO:
+* Unzip to tmp directory, delete at end.
+* GPS deletions / alternations
+* Timestamp alterations
+* Star alterations
+* Publish on github
+* Labels, collections, faces.
 """
 
 import pandas as pd
@@ -21,7 +29,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('db1', None, 'First database.')
 flags.DEFINE_string('db2', None, 'Second database.')
 
-MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3.lrcat'
+MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat'
 
 QUERY_CAPTIONS = """
 SELECT
