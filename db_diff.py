@@ -8,10 +8,10 @@ python3 db_diff.py \
     --alsologtostderr
 
 TODO:
-* Unzip to tmp directory, delete at end.
-* GPS deletions / alternations
+* GPS deletions / alterations
 * Timestamp alterations
 * Star alterations
+* Unzip to tmp directory, delete at end.
 * Publish on github
 * Labels, collections, faces.
 """
@@ -31,15 +31,30 @@ flags.DEFINE_string('db2', None, 'Second database.')
 
 MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat'
 
+# Using *s below since I don't know the DB schema well, and want to notice
+# if new things appear.
+# Using dummy columns to mark which columns come from which tables.
+TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 QUERY_CAPTIONS = """
 SELECT
-    *
+    0 AS TABLE_MARKER_Adobe_images,
+    Adobe_images.*,
+    0 AS TABLE_MARKER_AgLibraryFile,
+    AgLibraryFile.*,
+    0 AS TABLE_MARKER_AgLibraryFolder,
+    AgLibraryFolder.*,
+    0 AS TABLE_MARKER_AgLibraryRootFolder,
+    AgLibraryRootFolder.*,
+    0 AS TABLE_MARKER_AgLibraryIPTC,
+    AgLibraryIPTC.*
 FROM Adobe_images
-LEFT JOIN AgLibraryFile ON Adobe_images.rootFile = AgLibraryFile.id_local
-LEFT JOIN AgLibraryFolder ON AgLibraryFile.folder = AgLibraryFolder.id_local
+LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
+LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
+LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
 LEFT JOIN AgLibraryIPTC ON AgLibraryIPTC.image = Adobe_images.id_local
 ;
 """
+
 
 class LightroomDb(object):
   
@@ -50,8 +65,20 @@ class LightroomDb(object):
 def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
   cursor.execute(query)
   rows = cursor.fetchall()
-  columns = [d[0] for d in cursor.description]
-  df = pd.DataFrame.from_records(rows, columns=columns)
+  column_names = []
+  table_marker_columns = []
+  table_prefix = ''
+  for d in cursor.description:
+    name = d[0]
+    if name.startswith(TABLE_MARKER_PREFIX):
+      # This is a special marker column
+      table_prefix = name[len(TABLE_MARKER_PREFIX):] + '_'
+      column_names.append(name)
+      table_marker_columns.append(name)
+    else:
+      column_names.append(table_prefix + name)
+  df = pd.DataFrame.from_records(rows, columns=column_names)
+  df = df.drop(labels=table_marker_columns, axis=1)
   return df
 
 def load_db(path: Text):
@@ -60,7 +87,7 @@ def load_db(path: Text):
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
   lightroom_db.images_df = query_to_data_frame(cursor, QUERY_CAPTIONS)
-  lightroom_db.images_df.loc[lightroom_db.images_df.caption == '', 'caption'] = None
+  #lightroom_db.images_df.loc[lightroom_db.images_df.caption == '', 'caption'] = None
   return lightroom_db
 
 
@@ -70,9 +97,13 @@ VACUOUS_CAPTIONS = set([
   'Exif JPEG',
 ])
 
-def diff_captions(db1: LightroomDb, db2: LightroomDb):
-  joined_df = db1.images_df.merge(db2.images_df, how='outer', on='image', suffixes=('_db1', '_db2'))
 
+def merge_db_images(db1: LightroomDb, db2: LightroomDb):
+  merged_images_df = db1.images_df.merge(
+      db2.images_df, how='outer', on='image', suffixes=('_db1', '_db2'))
+  return merged_images_df
+
+def diff_captions(merged_images_df):
   IMAGE_COLS = ['pathFromRoot_db1', 'originalFilename_db1']
 
   image_removed = pd.isna(joined_df.pathFromRoot_db2)
@@ -103,11 +134,10 @@ def diff_captions(db1: LightroomDb, db2: LightroomDb):
 def main(argv):
   if len(argv) > 1:
     logging.fatal('Unparsed arguments: %s', argv)
-
   db1 = load_db(FLAGS.db1)
   db2 = load_db(FLAGS.db2)
-
-  diff_captions(db1, db2)
+  merged_images_df = merge_db_images(db1, db2)
+  diff_captions(merged_images_df)
 
 
 if __name__ == '__main__':
