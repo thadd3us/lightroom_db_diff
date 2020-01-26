@@ -46,15 +46,67 @@ SELECT
     0 AS TABLE_MARKER_AgLibraryRootFolder,
     AgLibraryRootFolder.*,
     0 AS TABLE_MARKER_AgLibraryIPTC,
-    AgLibraryIPTC.*
+    AgLibraryIPTC.*,
+    0 AS TABLE_MARKER_AgHarvestedExifMetadata,
+    AgHarvestedExifMetadata.*
 FROM Adobe_images
 LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
 LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
 LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
 LEFT JOIN AgLibraryIPTC ON AgLibraryIPTC.image = Adobe_images.id_local
+LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_images.id_local
 ;
 """
 
+['Adobe_images_id_local', 'Adobe_images_id_global',
+       'Adobe_images_aspectRatioCache', 'Adobe_images_bitDepth',
+       'Adobe_images_captureTime', 'Adobe_images_colorChannels',
+       'Adobe_images_colorLabels', 'Adobe_images_colorMode',
+       'Adobe_images_copyCreationTime', 'Adobe_images_copyName',
+       'Adobe_images_copyReason', 'Adobe_images_developSettingsIDCache',
+       'Adobe_images_fileFormat', 'Adobe_images_fileHeight',
+       'Adobe_images_fileWidth', 'Adobe_images_hasMissingSidecars',
+       'Adobe_images_masterImage', 'Adobe_images_orientation',
+       'Adobe_images_originalCaptureTime', 'Adobe_images_originalRootEntity',
+       'Adobe_images_panningDistanceH', 'Adobe_images_panningDistanceV',
+       'Adobe_images_pick', 'Adobe_images_positionInFolder',
+       'Adobe_images_propertiesCache', 'Adobe_images_pyramidIDCache',
+       'Adobe_images_rating', 'Adobe_images_rootFile',
+       'Adobe_images_sidecarStatus', 'Adobe_images_touchCount',
+       'Adobe_images_touchTime', ]
+['AgLibraryFile_id_local',
+       'AgLibraryFile_id_global', 'AgLibraryFile_baseName',
+       'AgLibraryFile_errorMessage', 'AgLibraryFile_errorTime',
+       'AgLibraryFile_extension', 'AgLibraryFile_externalModTime',
+       'AgLibraryFile_folder', 'AgLibraryFile_idx_filename',
+       'AgLibraryFile_importHash', 'AgLibraryFile_lc_idx_filename',
+       'AgLibraryFile_lc_idx_filenameExtension', 'AgLibraryFile_md5',
+       'AgLibraryFile_modTime', 'AgLibraryFile_originalFilename',
+       'AgLibraryFile_sidecarExtensions', ]
+['AgLibraryFolder_id_local',
+       'AgLibraryFolder_id_global', 'AgLibraryFolder_pathFromRoot',
+       'AgLibraryFolder_rootFolder', ]
+['AgLibraryRootFolder_id_local',
+       'AgLibraryRootFolder_id_global', 'AgLibraryRootFolder_absolutePath',
+       'AgLibraryRootFolder_name',
+       'AgLibraryRootFolder_relativePathFromCatalog', ]
+['AgLibraryIPTC_id_local',
+       'AgLibraryIPTC_caption', 'AgLibraryIPTC_copyright',
+       'AgLibraryIPTC_image']
+['AgHarvestedExifMetadata_id_local',
+       'AgHarvestedExifMetadata_image', 'AgHarvestedExifMetadata_aperture',
+       'AgHarvestedExifMetadata_cameraModelRef',
+       'AgHarvestedExifMetadata_cameraSNRef',
+       'AgHarvestedExifMetadata_dateDay', 'AgHarvestedExifMetadata_dateMonth',
+       'AgHarvestedExifMetadata_dateYear',
+       'AgHarvestedExifMetadata_flashFired',
+       'AgHarvestedExifMetadata_focalLength',
+       'AgHarvestedExifMetadata_gpsLatitude',
+       'AgHarvestedExifMetadata_gpsLongitude',
+       'AgHarvestedExifMetadata_gpsSequence', 'AgHarvestedExifMetadata_hasGPS',
+       'AgHarvestedExifMetadata_isoSpeedRating',
+       'AgHarvestedExifMetadata_lensRef',
+       'AgHarvestedExifMetadata_shutterSpeed']
 
 class LightroomDb(object):
   
@@ -100,7 +152,7 @@ VACUOUS_CAPTIONS = set([
 
 def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   merged_images_df = db1.images_df.merge(
-      db2.images_df, how='outer', on='image', suffixes=('_db1', '_db2'))
+      db2.images_df, how='outer', on='Adobe_images_id_local', suffixes=('_db1', '_db2'))
   return merged_images_df
 
 def diff_captions(merged_images_df):
