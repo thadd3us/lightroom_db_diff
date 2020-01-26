@@ -3,8 +3,8 @@
 Example command line:
 
 python3 db_diff.py \
-    --db1 "/Users/thadh/Google Drive/Lightroom Backups/Lightroom Backups - contain lost metadata/2014-06-19 1511/Lightroom 5 Catalog.lrcat" \
-    --db2 "/Users/thadh/Google Drive/Lightroom Backups/2019-11-24 1444/Lightroom Catalog-2-3.lrcat" \
+    --db1 "/Users/thadh/Google Drive/Lightroom Backups/Contain lost metadata/2014-06-19 1511/Lightroom 5 Catalog.lrcat" \
+    --db2 "/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat" \
     --alsologtostderr
 
 TODO:
@@ -31,10 +31,57 @@ flags.DEFINE_string('db2', None, 'Second database.')
 
 MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat'
 
+DB1_SUFFIX = '_db1'
+DB2_SUFFIX = '_db2'
+
+DIFF_TYPE = 'DIFF_TYPE'
+VALUE_DB1 = 'value' + DB1_SUFFIX
+VALUE_DB2 = 'value' + DB2_SUFFIX
+VALUE_DELTA = 'value_delta'
+
+
+# Make enum. 
+class Columns(object):
+  ROOT_FILE = 'Adobe_images_rootFile'
+  CAPTION = 'AgLibraryIPTC_caption'
+  GPS_LATITUDE = 'AgHarvestedExifMetadata_gpsLatitude'
+  GPS_LONGITUDE = 'AgHarvestedExifMetadata_gpsLongitude'
+  RATING = 'Adobe_images_rating'
+  COLOR_LABELS = 'Adobe_images_colorLabels'
+  CAPTURE_TIME = 'Adobe_images_captureTime'
+  
+DIFF_COLUMNS = [
+  Columns.CAPTION,
+  Columns.GPS_LATITUDE,
+  Columns.GPS_LONGITUDE,
+  Columns.RATING,
+  Columns.COLOR_LABELS,
+  Columns.CAPTURE_TIME,
+]
+
+REPORT_COLUMNS = [
+  'AgLibraryFile_idx_filename' + DB1_SUFFIX,
+  'AgLibraryFolder_pathFromRoot' + DB1_SUFFIX,
+  'AgLibraryRootFolder_absolutePath' + DB1_SUFFIX,
+]
+
+SORT_COLUMNS = [
+  'AgLibraryRootFolder_absolutePath' + DB1_SUFFIX,
+  'AgLibraryFolder_pathFromRoot' + DB1_SUFFIX,
+  'AgLibraryFile_idx_filename' + DB1_SUFFIX,
+]
+
+VACUOUS_CAPTIONS = set([
+  '',
+  'OLYMPUS DIGITAL CAMERA',
+  'Exif JPEG',
+])
+
+TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
+
 # Using *s below since I don't know the DB schema well, and want to notice
 # if new things appear.
 # Using dummy columns to mark which columns come from which tables.
-TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 QUERY_CAPTIONS = """
 SELECT
     0 AS TABLE_MARKER_Adobe_images,
@@ -58,6 +105,7 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
 ;
 """
 
+# What's in the tables.
 ['Adobe_images_id_local', 'Adobe_images_id_global',
        'Adobe_images_aspectRatioCache', 'Adobe_images_bitDepth',
        'Adobe_images_captureTime', 'Adobe_images_colorChannels',
@@ -94,19 +142,23 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
        'AgLibraryIPTC_caption', 'AgLibraryIPTC_copyright',
        'AgLibraryIPTC_image']
 ['AgHarvestedExifMetadata_id_local',
-       'AgHarvestedExifMetadata_image', 'AgHarvestedExifMetadata_aperture',
+       'AgHarvestedExifMetadata_image',
+       'AgHarvestedExifMetadata_aperture',
        'AgHarvestedExifMetadata_cameraModelRef',
        'AgHarvestedExifMetadata_cameraSNRef',
-       'AgHarvestedExifMetadata_dateDay', 'AgHarvestedExifMetadata_dateMonth',
+       'AgHarvestedExifMetadata_dateDay',
+       'AgHarvestedExifMetadata_dateMonth',
        'AgHarvestedExifMetadata_dateYear',
        'AgHarvestedExifMetadata_flashFired',
        'AgHarvestedExifMetadata_focalLength',
        'AgHarvestedExifMetadata_gpsLatitude',
        'AgHarvestedExifMetadata_gpsLongitude',
-       'AgHarvestedExifMetadata_gpsSequence', 'AgHarvestedExifMetadata_hasGPS',
+       'AgHarvestedExifMetadata_gpsSequence',
+       'AgHarvestedExifMetadata_hasGPS',
        'AgHarvestedExifMetadata_isoSpeedRating',
        'AgHarvestedExifMetadata_lensRef',
        'AgHarvestedExifMetadata_shutterSpeed']
+
 
 class LightroomDb(object):
   
@@ -123,7 +175,7 @@ def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
   for d in cursor.description:
     name = d[0]
     if name.startswith(TABLE_MARKER_PREFIX):
-      # This is a special marker column
+      # This is a special marker column.
       table_prefix = name[len(TABLE_MARKER_PREFIX):] + '_'
       column_names.append(name)
       table_marker_columns.append(name)
@@ -133,55 +185,74 @@ def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
   df = df.drop(labels=table_marker_columns, axis=1)
   return df
 
+
 def load_db(path: Text):
   logging.info('load_db, path=%s', path)
   connection = sqlite3.connect(path)
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
   lightroom_db.images_df = query_to_data_frame(cursor, QUERY_CAPTIONS)
-  #lightroom_db.images_df.loc[lightroom_db.images_df.caption == '', 'caption'] = None
   return lightroom_db
 
 
-VACUOUS_CAPTIONS = set([
-  '',
-  'OLYMPUS DIGITAL CAMERA',
-  'Exif JPEG',
-])
-
-
 def merge_db_images(db1: LightroomDb, db2: LightroomDb):
+  logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
       db2.images_df, how='outer', on='Adobe_images_id_local', suffixes=('_db1', '_db2'))
   return merged_images_df
 
-def diff_captions(merged_images_df):
-  IMAGE_COLS = ['pathFromRoot_db1', 'originalFilename_db1']
 
-  image_removed = pd.isna(joined_df.pathFromRoot_db2)
-  print('SUMMARY: image_removed, n=%d' % sum(image_removed))
-  if sum(image_removed) > 0:
-    print(joined_df[image_removed].pathFromRoot_db1.value_counts(dropna=False))
-  print()
+def diff_image_presence(merged_images_df):
+  logging.info('diff_image_presence')
+  image_removed = pd.isna(merged_images_df[Columns.ROOT_FILE + DB2_SUFFIX])
+  diff_chunk = merged_images_df.loc[image_removed, REPORT_COLUMNS]
+  diff_chunk[DIFF_TYPE] = 'PRESENCE'
+  diff_chunk[VALUE_DB1] = 'PRESENT'
+  diff_chunk[VALUE_DB2] = 'ABSENT'
+  return diff_chunk, image_removed
 
-  caption_1 = joined_df.caption_db1.fillna('')
-  caption_2 = joined_df.caption_db2.fillna('')
-  caption_removed = (caption_1 != '') & (caption_2 == '') & (~image_removed )
-  caption_removed &= ~caption_1.isin(VACUOUS_CAPTIONS)
-  print('SUMMARY: caption_removed, n=%d' % sum(caption_removed))
-  if sum(caption_removed) > 0:
-    print(joined_df[caption_removed].pathFromRoot_db1.value_counts(dropna=False))
-  print()
+
+def diff_column(merged_images_df, column_name, rows_to_ignore):
+  column_db1 = merged_images_df[column_name + DB1_SUFFIX]
+  column_db2 = merged_images_df[column_name + DB2_SUFFIX]
   
-  caption_altered = (caption_1 != caption_2) & ~caption_removed & ~image_removed
-  caption_altered &= ~caption_1.isin(VACUOUS_CAPTIONS)
-  print('SUMMARY: caption_altered n=%d' % sum(caption_altered))
-  if sum(caption_altered) > 0:
-    print(joined_df[caption_altered].pathFromRoot_db1.value_counts(dropna=False))
-  print()
-   
-  return (image_removed, caption_removed, caption_altered)
+  # Gate on FLAG?
+  rows_to_ignore = rows_to_ignore | pd.isna(column_db1)
+  rows_to_ignore = rows_to_ignore | column_db1.isin(VACUOUS_CAPTIONS)  
+  
+  value_altered = (column_db1 != column_db2) & ~rows_to_ignore
+  
+  diff_chunk = merged_images_df.loc[value_altered, REPORT_COLUMNS]
+  diff_chunk[DIFF_TYPE] = column_name
+  diff_chunk[VALUE_DB1] = column_db1[value_altered]
+  diff_chunk[VALUE_DB2] = column_db2[value_altered]
+  
+  if column_db1.dtype in ('float64', 'float32', 'int32', 'int64'):
+    diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
+    
+  return diff_chunk, value_altered
 
+def compute_diff(merged_images_df, diff_column_names):
+  logging.info('compute_diff')
+  diff_chunks = []
+  image_removed_diff_chunk, image_removed = diff_image_presence(merged_images_df)
+  diff_chunks.append(image_removed_diff_chunk)
+  
+  for column_name in diff_column_names:
+    diff_chunk, _ = diff_column(merged_images_df, column_name, rows_to_ignore=image_removed)
+    diff_chunks.append(diff_chunk)
+    
+  diff_df = pd.concat(objs=diff_chunks, axis=0, ignore_index=True, sort=False)
+  diff_df = diff_df.sort_values(by=SORT_COLUMNS)
+  
+  column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
+  if VALUE_DELTA in diff_df.columns:
+    column_ordering.append(VALUE_DELTA)
+  column_ordering += REPORT_COLUMNS
+  diff_df = diff_df[column_ordering]
+  
+  return diff_df
+ 
 
 def main(argv):
   if len(argv) > 1:
@@ -189,8 +260,11 @@ def main(argv):
   db1 = load_db(FLAGS.db1)
   db2 = load_db(FLAGS.db2)
   merged_images_df = merge_db_images(db1, db2)
-  diff_captions(merged_images_df)
+  diff_df = compute_diff(merged_images_df, DIFF_COLUMNS)
 
+  logging.info('Printing diff to stdout.')
+  print(diff_df.to_csv(sep='\t', index=False))
+  
 
 if __name__ == '__main__':
   flags.mark_flag_as_required('db1')
