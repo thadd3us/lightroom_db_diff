@@ -7,13 +7,15 @@ python3 db_diff.py \
     --db2 "/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat" \
     --alsologtostderr
 
+pip3 install maya
+
 TODO:
-* GPS deletions / alterations
-* Timestamp alterations
-* Star alterations
+* Join foreign databases using non-local key
+* Check that non-local key is unique
+* Labels, collections, faces.
 * Unzip to tmp directory, delete at end.
 * Publish on github
-* Labels, collections, faces.
+* Parse timestamp and report deltas.
 """
 
 import pandas as pd
@@ -49,6 +51,7 @@ class Columns(object):
   RATING = 'Adobe_images_rating'
   COLOR_LABELS = 'Adobe_images_colorLabels'
   CAPTURE_TIME = 'Adobe_images_captureTime'
+  HASH = 'AgLibraryFile_importHash'
   
 DIFF_COLUMNS = [
   Columns.CAPTION,
@@ -57,6 +60,7 @@ DIFF_COLUMNS = [
   Columns.RATING,
   Columns.COLOR_LABELS,
   Columns.CAPTURE_TIME,
+  Columns.HASH,
 ]
 
 REPORT_COLUMNS = [
@@ -82,7 +86,7 @@ TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 # Using *s below since I don't know the DB schema well, and want to notice
 # if new things appear.
 # Using dummy columns to mark which columns come from which tables.
-QUERY_CAPTIONS = """
+QUERY_IMAGES = """
 SELECT
     0 AS TABLE_MARKER_Adobe_images,
     Adobe_images.*,
@@ -160,10 +164,46 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
        'AgHarvestedExifMetadata_shutterSpeed']
 
 
+
+QUERY_KEYWORDS = """
+SELECT
+    AgLibraryKeywordImage.image AS image,
+    AgLibraryKeyword.name AS keyword,
+    AgLibraryFile.idx_filename AS AgLibraryFile_idx_filename,
+    AgLibraryFolder.pathFromRoot AS AgLibraryFolder_pathFromRoot,
+    AgLibraryRootFolder.name AS AgLibraryRootFolder_name
+FROM AgLibraryKeywordImage
+LEFT JOIN AgLibraryKeyword ON AgLibraryKeyword.id_local = AgLibraryKeywordImage.tag
+LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
+LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
+LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
+LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
+;
+"""
+
+['AgLibraryKeywordImage_id_local', 'AgLibraryKeywordImage_image',
+       'AgLibraryKeywordImage_tag', ]
+['AgLibraryKeyword_id_local',
+       'AgLibraryKeyword_id_global', 'AgLibraryKeyword_dateCreated',
+       'AgLibraryKeyword_genealogy', 'AgLibraryKeyword_imageCountCache',
+       'AgLibraryKeyword_includeOnExport', 'AgLibraryKeyword_includeParents',
+       'AgLibraryKeyword_includeSynonyms', 'AgLibraryKeyword_keywordType',
+       'AgLibraryKeyword_lastApplied', 'AgLibraryKeyword_lc_name',
+       'AgLibraryKeyword_name', 'AgLibraryKeyword_parent']
+
+
 class LightroomDb(object):
   
   def __init__(self):
     self.images_df = None
+    self.keywords_df = None
+
+
+class MergedDbs(object):
+
+  def __init__(self):
+    self.images_df = None
+    self.keywords_df = None
 
   
 def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
@@ -191,16 +231,38 @@ def load_db(path: Text):
   connection = sqlite3.connect(path)
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
-  lightroom_db.images_df = query_to_data_frame(cursor, QUERY_CAPTIONS)
+  lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
+  
+  
+  lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
   return lightroom_db
 
 
 def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
-      db2.images_df, how='outer', on='Adobe_images_id_local', suffixes=('_db1', '_db2'))
+      db2.images_df, how='outer',
+      on='Adobe_images_id_local', suffixes=('_db1', '_db2'))
   return merged_images_df
 
+
+def merge_db_keywords(db1: LightroomDb, db2: LightroomDb):
+  logging.info('merge_db_keywords')
+  merged_keywords_df = db1.keywords_df.merge(
+      db2.keywords_df, how='outer',
+      on=['image', 'keyword'],
+      suffixes=('_db1', '_db2'),
+      indicator='presence')
+  return merged_keywords_df
+
+
+def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
+  logging.info('computed_merge_dbs')
+  merged_dbs = MergedDbs()
+  merged_dbs.images_df = merge_db_images(db1, db2)
+  merged_dbs.keywords_df = merge_db_keywords(db1, db2)
+  return merged_dbs
+  
 
 def diff_image_presence(merged_images_df):
   logging.info('diff_image_presence')
@@ -226,24 +288,39 @@ def diff_column(merged_images_df, column_name, rows_to_ignore):
   diff_chunk[DIFF_TYPE] = column_name
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
-  
+
+  # TODO(numeric).
   if column_db1.dtype in ('float64', 'float32', 'int32', 'int64'):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
     
   return diff_chunk, value_altered
 
-def compute_diff(merged_images_df, diff_column_names):
+
+def diff_keywords(merged_keywords_df, rows_to_ignore):
+  # TODO: Only report images not in rows_to_ignore
+  removed = merged_keywords_df.presence == 'left_only'
+  diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
+  diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
+  diff_chunk[VALUE_DB1] = merged_keywords_df[value_altered, keyword]
+  diff_chunk[VALUE_DB2] = None
+  return diff_chunk
+  
+
+def compute_diff(merged_dbs: MergedDbs, diff_column_names):
   logging.info('compute_diff')
   diff_chunks = []
-  image_removed_diff_chunk, image_removed = diff_image_presence(merged_images_df)
+  image_removed_diff_chunk, image_removed = diff_image_presence(merged_dbs.images_df)
   diff_chunks.append(image_removed_diff_chunk)
   
   for column_name in diff_column_names:
-    diff_chunk, _ = diff_column(merged_images_df, column_name, rows_to_ignore=image_removed)
+    diff_chunk, _ = diff_column(merged_dbs.images_df, column_name, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
   diff_df = pd.concat(objs=diff_chunks, axis=0, ignore_index=True, sort=False)
   diff_df = diff_df.sort_values(by=SORT_COLUMNS)
+
+  keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
+  diff_chunks.append(keyword_diff_chunk)
   
   column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
   if VALUE_DELTA in diff_df.columns:
@@ -259,8 +336,10 @@ def main(argv):
     logging.fatal('Unparsed arguments: %s', argv)
   db1 = load_db(FLAGS.db1)
   db2 = load_db(FLAGS.db2)
-  merged_images_df = merge_db_images(db1, db2)
+  merged_dbs = computed_merge_dbs(db1, db2)
   diff_df = compute_diff(merged_images_df, DIFF_COLUMNS)
+
+  merged_keywords_df = db_diff.merge_db_keywords(db1, db2)
 
   logging.info('Printing diff to stdout.')
   print(diff_df.to_csv(sep='\t', index=False))
