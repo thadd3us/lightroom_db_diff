@@ -18,6 +18,8 @@ TODO:
 * Parse timestamp and report deltas.
 """
 
+import enum
+import maya
 import pandas as pd
 import sqlite3
 
@@ -43,7 +45,7 @@ VALUE_DELTA = 'value_delta'
 
 
 # Make enum. 
-class Columns(object):
+class Columns(enum.Enum):
   ROOT_FILE = 'Adobe_images_rootFile'
   CAPTION = 'AgLibraryIPTC_caption'
   GPS_LATITUDE = 'AgHarvestedExifMetadata_gpsLatitude'
@@ -52,6 +54,8 @@ class Columns(object):
   COLOR_LABELS = 'Adobe_images_colorLabels'
   CAPTURE_TIME = 'Adobe_images_captureTime'
   HASH = 'AgLibraryFile_importHash'
+  ID_GLOBAL = 'Adobe_images_id_global'
+  PARSED_CAPTURE_TIME = 'PARSED_CAPTURE_TIME'
   
 DIFF_COLUMNS = [
   Columns.CAPTION,
@@ -59,7 +63,8 @@ DIFF_COLUMNS = [
   Columns.GPS_LONGITUDE,
   Columns.RATING,
   Columns.COLOR_LABELS,
-  Columns.CAPTURE_TIME,
+  #Columns.CAPTURE_TIME,
+  Columns.PARSED_CAPTURE_TIME
   Columns.HASH,
 ]
 
@@ -192,6 +197,16 @@ LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.
        'AgLibraryKeyword_name', 'AgLibraryKeyword_parent']
 
 
+def parse_date_time(date_time_str):
+  if date_time_str is None:
+    return None
+  try:
+    return maya.parse(date_time_str)
+  except ValueError as e:
+    logging.error('Unable to parse time: %s\n%s', date_time_str, e)
+  return None
+
+
 class LightroomDb(object):
   
   def __init__(self):
@@ -232,7 +247,8 @@ def load_db(path: Text):
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
   lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
-  
+
+  lightroom_db.images_df.set_index(Columns.GLOBAL_ID, verify_integrity=True)
   
   lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
   return lightroom_db
@@ -242,7 +258,7 @@ def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
       db2.images_df, how='outer',
-      on='Adobe_images_id_local', suffixes=('_db1', '_db2'))
+      on=Columns.ID_GLOBAL, suffixes=('_db1', '_db2'))
   return merged_images_df
 
 
