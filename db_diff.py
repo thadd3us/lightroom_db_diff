@@ -3,11 +3,9 @@
 Example command line:
 
 python3 db_diff.py \
-    --db1 "/Users/thadh/Google Drive/Lightroom Backups/Contain lost metadata/2014-06-19 1511/Lightroom 5 Catalog.lrcat" \
-    --db2 "/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat" \
+    --db1 "/Users/thad/Dropbox/thad/Lightrooom/Backups/2020-02-27 0339/Lightroom Catalog-4.lrcat.zip" \
+    --db2 "/Users/thad/Dropbox/thad/Lightrooom/Backups/2020-05-12 1526/Lightroom Catalog-4.lrcat.zip" \
     --alsologtostderr
-
-pip3 install maya
 
 TODO:
 * Join foreign databases using non-local key
@@ -19,9 +17,12 @@ TODO:
 """
 
 import enum
+import glob
 import maya
+import os
 import pandas as pd
 import sqlite3
+import zipfile
 
 from absl import app
 from absl import flags
@@ -44,6 +45,25 @@ VALUE_DB2 = 'value' + DB2_SUFFIX
 VALUE_DELTA = 'value_delta'
 
 
+def maybe_unzip(filename: str) -> str:
+  """If a catalog is a zip file, extract to a known cache location."""
+  if not filename.endswith('.zip'):
+    logging.info('Not a zipfile, no need to extract.')
+    return filename
+  filename_without_slash = filename.replace('/', '_')
+  dest_dir = f'/tmp/{filename_without_slash}'
+  if not os.path.exists(dest_dir):
+    logging.info('Extracting to %s', dest_dir)
+    with zipfile.ZipFile(filename) as zf:
+      zf.extractall(dest_dir)
+  else:
+    logging.info('Already extracted.')
+
+  dest_dir_contents = glob.glob(os.path.join(dest_dir, '*.lrcat'))
+  assert len(dest_dir_contents) == 1, dest_dir_contents
+  return os.path.join(dest_dir, dest_dir_contents[0])
+
+
 # Make enum. 
 class Columns(enum.Enum):
   ROOT_FILE = 'Adobe_images_rootFile'
@@ -64,7 +84,7 @@ DIFF_COLUMNS = [
   Columns.RATING,
   Columns.COLOR_LABELS,
   #Columns.CAPTURE_TIME,
-  Columns.PARSED_CAPTURE_TIME
+  Columns.PARSED_CAPTURE_TIME,
   Columns.HASH,
 ]
 
@@ -247,10 +267,12 @@ def load_db(path: Text):
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
   lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
-
-  lightroom_db.images_df.set_index(Columns.GLOBAL_ID, verify_integrity=True)
+  lightroom_db.images_df[Columns.PARSED_CAPTURE_TIME.name] = (
+    lightroom_db.images_df[Columns.CAPTURE_TIME.value].map(parse_date_time))
+  lightroom_db.images_df.set_index(Columns.ID_GLOBAL.value, verify_integrity=True)
   
   lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
+  connection.close()
   return lightroom_db
 
 
@@ -258,7 +280,7 @@ def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
       db2.images_df, how='outer',
-      on=Columns.ID_GLOBAL, suffixes=('_db1', '_db2'))
+      on=Columns.ID_GLOBAL.value, suffixes=('_db1', '_db2'))
   return merged_images_df
 
 
@@ -282,7 +304,7 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
 
 def diff_image_presence(merged_images_df):
   logging.info('diff_image_presence')
-  image_removed = pd.isna(merged_images_df[Columns.ROOT_FILE + DB2_SUFFIX])
+  image_removed = pd.isna(merged_images_df[Columns.ROOT_FILE.value + DB2_SUFFIX])
   diff_chunk = merged_images_df.loc[image_removed, REPORT_COLUMNS]
   diff_chunk[DIFF_TYPE] = 'PRESENCE'
   diff_chunk[VALUE_DB1] = 'PRESENT'
@@ -290,9 +312,9 @@ def diff_image_presence(merged_images_df):
   return diff_chunk, image_removed
 
 
-def diff_column(merged_images_df, column_name, rows_to_ignore):
-  column_db1 = merged_images_df[column_name + DB1_SUFFIX]
-  column_db2 = merged_images_df[column_name + DB2_SUFFIX]
+def diff_column(merged_images_df, column: Columns, rows_to_ignore):
+  column_db1 = merged_images_df[column.value + DB1_SUFFIX]
+  column_db2 = merged_images_df[column.value + DB2_SUFFIX]
   
   # Gate on FLAG?
   rows_to_ignore = rows_to_ignore | pd.isna(column_db1)
@@ -301,7 +323,7 @@ def diff_column(merged_images_df, column_name, rows_to_ignore):
   value_altered = (column_db1 != column_db2) & ~rows_to_ignore
   
   diff_chunk = merged_images_df.loc[value_altered, REPORT_COLUMNS]
-  diff_chunk[DIFF_TYPE] = column_name
+  diff_chunk[DIFF_TYPE] = column.name
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
 
@@ -312,31 +334,31 @@ def diff_column(merged_images_df, column_name, rows_to_ignore):
   return diff_chunk, value_altered
 
 
-def diff_keywords(merged_keywords_df, rows_to_ignore):
-  # TODO: Only report images not in rows_to_ignore
-  removed = merged_keywords_df.presence == 'left_only'
-  diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
-  diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
-  diff_chunk[VALUE_DB1] = merged_keywords_df[value_altered, keyword]
-  diff_chunk[VALUE_DB2] = None
-  return diff_chunk
+# def diff_keywords(merged_keywords_df, rows_to_ignore):
+#   # TODO: Only report images not in rows_to_ignore
+#   removed = merged_keywords_df.presence == 'left_only'
+#   diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
+#   diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
+#   diff_chunk[VALUE_DB1] = merged_keywords_df[value_altered, keyword]
+#   diff_chunk[VALUE_DB2] = None
+#   return diff_chunk
   
 
-def compute_diff(merged_dbs: MergedDbs, diff_column_names):
+def compute_diff(merged_dbs: MergedDbs, diff_columns) -> pd.DataFrame:
   logging.info('compute_diff')
   diff_chunks = []
   image_removed_diff_chunk, image_removed = diff_image_presence(merged_dbs.images_df)
   diff_chunks.append(image_removed_diff_chunk)
   
-  for column_name in diff_column_names:
-    diff_chunk, _ = diff_column(merged_dbs.images_df, column_name, rows_to_ignore=image_removed)
+  for column in diff_columns:
+    diff_chunk, _ = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
   diff_df = pd.concat(objs=diff_chunks, axis=0, ignore_index=True, sort=False)
   diff_df = diff_df.sort_values(by=SORT_COLUMNS)
 
-  keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
-  diff_chunks.append(keyword_diff_chunk)
+#   keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
+#   diff_chunks.append(keyword_diff_chunk)
   
   column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
   if VALUE_DELTA in diff_df.columns:
@@ -350,12 +372,13 @@ def compute_diff(merged_dbs: MergedDbs, diff_column_names):
 def main(argv):
   if len(argv) > 1:
     logging.fatal('Unparsed arguments: %s', argv)
-  db1 = load_db(FLAGS.db1)
-  db2 = load_db(FLAGS.db2)
-  merged_dbs = computed_merge_dbs(db1, db2)
-  diff_df = compute_diff(merged_images_df, DIFF_COLUMNS)
+    
+  db1 = load_db(maybe_unzip(FLAGS.db1))
+  db2 = load_db(maybe_unzip(FLAGS.db2))
+  merged_dbs = compute_merge_dbs(db1, db2)
+  diff_df = compute_diff(merged_dbs, DIFF_COLUMNS)
 
-  merged_keywords_df = db_diff.merge_db_keywords(db1, db2)
+#   merged_keywords_df = db_diff.merge_db_keywords(db1, db2)
 
   logging.info('Printing diff to stdout.')
   print(diff_df.to_csv(sep='\t', index=False))
