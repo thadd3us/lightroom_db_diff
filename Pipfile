@@ -11,6 +11,8 @@ pandas = "*"
 jupyter = "*"
 absl-py = "*"
 plotly-express = "*"
+pytest-watch = "*"
+pudb = "*"
 
 [requires]
 python_version = "3.7"

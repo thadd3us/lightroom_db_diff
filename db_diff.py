@@ -8,12 +8,8 @@ python3 db_diff.py \
     --alsologtostderr
 
 TODO:
-* Join foreign databases using non-local key
-* Check that non-local key is unique
 * Labels, collections, faces.
-* Unzip to tmp directory, delete at end.
 * Publish on github
-* Parse timestamp and report deltas.
 """
 
 import enum
@@ -28,13 +24,11 @@ from absl import app
 from absl import flags
 from absl import logging
 
-from typing import Text
+from typing import Iterable, Text
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('db1', None, 'First database.')
 flags.DEFINE_string('db2', None, 'Second database.')
-
-MAIN_CATALOG = '/Users/thadh/personal/Lightroom/Lightroom Catalog-2-3-2.lrcat'
 
 DB1_SUFFIX = '_db1'
 DB2_SUFFIX = '_db2'
@@ -64,8 +58,8 @@ def maybe_unzip(filename: str) -> str:
   return os.path.join(dest_dir, dest_dir_contents[0])
 
 
-# Make enum. 
-class Columns(enum.Enum):
+@enum.unique
+class Column(enum.Enum):
   ROOT_FILE = 'Adobe_images_rootFile'
   CAPTION = 'AgLibraryIPTC_caption'
   GPS_LATITUDE = 'AgHarvestedExifMetadata_gpsLatitude'
@@ -76,17 +70,18 @@ class Columns(enum.Enum):
   HASH = 'AgLibraryFile_importHash'
   ID_GLOBAL = 'Adobe_images_id_global'
   PARSED_CAPTURE_TIME = 'PARSED_CAPTURE_TIME'
-  
+
+
 DIFF_COLUMNS = [
-  Columns.CAPTION,
-  Columns.GPS_LATITUDE,
-  Columns.GPS_LONGITUDE,
-  Columns.RATING,
-  Columns.COLOR_LABELS,
-  #Columns.CAPTURE_TIME,
-  Columns.PARSED_CAPTURE_TIME,
-  Columns.HASH,
+  Column.CAPTION,
+  Column.GPS_LATITUDE,
+  Column.GPS_LONGITUDE,
+  Column.RATING,
+  Column.COLOR_LABELS,
+  Column.PARSED_CAPTURE_TIME,
+  Column.HASH,
 ]
+
 
 REPORT_COLUMNS = [
   'AgLibraryFile_idx_filename' + DB1_SUFFIX,
@@ -134,61 +129,6 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
 ;
 """
 
-# What's in the tables.
-['Adobe_images_id_local', 'Adobe_images_id_global',
-       'Adobe_images_aspectRatioCache', 'Adobe_images_bitDepth',
-       'Adobe_images_captureTime', 'Adobe_images_colorChannels',
-       'Adobe_images_colorLabels', 'Adobe_images_colorMode',
-       'Adobe_images_copyCreationTime', 'Adobe_images_copyName',
-       'Adobe_images_copyReason', 'Adobe_images_developSettingsIDCache',
-       'Adobe_images_fileFormat', 'Adobe_images_fileHeight',
-       'Adobe_images_fileWidth', 'Adobe_images_hasMissingSidecars',
-       'Adobe_images_masterImage', 'Adobe_images_orientation',
-       'Adobe_images_originalCaptureTime', 'Adobe_images_originalRootEntity',
-       'Adobe_images_panningDistanceH', 'Adobe_images_panningDistanceV',
-       'Adobe_images_pick', 'Adobe_images_positionInFolder',
-       'Adobe_images_propertiesCache', 'Adobe_images_pyramidIDCache',
-       'Adobe_images_rating', 'Adobe_images_rootFile',
-       'Adobe_images_sidecarStatus', 'Adobe_images_touchCount',
-       'Adobe_images_touchTime', ]
-['AgLibraryFile_id_local',
-       'AgLibraryFile_id_global', 'AgLibraryFile_baseName',
-       'AgLibraryFile_errorMessage', 'AgLibraryFile_errorTime',
-       'AgLibraryFile_extension', 'AgLibraryFile_externalModTime',
-       'AgLibraryFile_folder', 'AgLibraryFile_idx_filename',
-       'AgLibraryFile_importHash', 'AgLibraryFile_lc_idx_filename',
-       'AgLibraryFile_lc_idx_filenameExtension', 'AgLibraryFile_md5',
-       'AgLibraryFile_modTime', 'AgLibraryFile_originalFilename',
-       'AgLibraryFile_sidecarExtensions', ]
-['AgLibraryFolder_id_local',
-       'AgLibraryFolder_id_global', 'AgLibraryFolder_pathFromRoot',
-       'AgLibraryFolder_rootFolder', ]
-['AgLibraryRootFolder_id_local',
-       'AgLibraryRootFolder_id_global', 'AgLibraryRootFolder_absolutePath',
-       'AgLibraryRootFolder_name',
-       'AgLibraryRootFolder_relativePathFromCatalog', ]
-['AgLibraryIPTC_id_local',
-       'AgLibraryIPTC_caption', 'AgLibraryIPTC_copyright',
-       'AgLibraryIPTC_image']
-['AgHarvestedExifMetadata_id_local',
-       'AgHarvestedExifMetadata_image',
-       'AgHarvestedExifMetadata_aperture',
-       'AgHarvestedExifMetadata_cameraModelRef',
-       'AgHarvestedExifMetadata_cameraSNRef',
-       'AgHarvestedExifMetadata_dateDay',
-       'AgHarvestedExifMetadata_dateMonth',
-       'AgHarvestedExifMetadata_dateYear',
-       'AgHarvestedExifMetadata_flashFired',
-       'AgHarvestedExifMetadata_focalLength',
-       'AgHarvestedExifMetadata_gpsLatitude',
-       'AgHarvestedExifMetadata_gpsLongitude',
-       'AgHarvestedExifMetadata_gpsSequence',
-       'AgHarvestedExifMetadata_hasGPS',
-       'AgHarvestedExifMetadata_isoSpeedRating',
-       'AgHarvestedExifMetadata_lensRef',
-       'AgHarvestedExifMetadata_shutterSpeed']
-
-
 
 QUERY_KEYWORDS = """
 SELECT
@@ -196,7 +136,8 @@ SELECT
     AgLibraryKeyword.name AS keyword,
     AgLibraryFile.idx_filename AS AgLibraryFile_idx_filename,
     AgLibraryFolder.pathFromRoot AS AgLibraryFolder_pathFromRoot,
-    AgLibraryRootFolder.name AS AgLibraryRootFolder_name
+    AgLibraryRootFolder.name AS AgLibraryRootFolder_name,
+    AgLibraryRootFolder.absolutePath AS AgLibraryRootFolder_absolutePath
 FROM AgLibraryKeywordImage
 LEFT JOIN AgLibraryKeyword ON AgLibraryKeyword.id_local = AgLibraryKeywordImage.tag
 LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
@@ -225,6 +166,7 @@ def parse_date_time(date_time_str):
   except ValueError as e:
     logging.error('Unable to parse time: %s\n%s', date_time_str, e)
   return None
+
 
 
 class LightroomDb(object):
@@ -267,9 +209,9 @@ def load_db(path: Text):
   cursor = connection.cursor()
   lightroom_db = LightroomDb()
   lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
-  lightroom_db.images_df[Columns.PARSED_CAPTURE_TIME.name] = (
-    lightroom_db.images_df[Columns.CAPTURE_TIME.value].map(parse_date_time))
-  lightroom_db.images_df.set_index(Columns.ID_GLOBAL.value, verify_integrity=True)
+  lightroom_db.images_df[Column.PARSED_CAPTURE_TIME.name] = (
+    lightroom_db.images_df[Column.CAPTURE_TIME.value].map(parse_date_time))
+  lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
   
   lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
   connection.close()
@@ -280,7 +222,7 @@ def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
       db2.images_df, how='outer',
-      on=Columns.ID_GLOBAL.value, suffixes=('_db1', '_db2'))
+      on=Column.ID_GLOBAL.value, suffixes=('_db1', '_db2'))
   return merged_images_df
 
 
@@ -304,7 +246,7 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
 
 def diff_image_presence(merged_images_df):
   logging.info('diff_image_presence')
-  image_removed = pd.isna(merged_images_df[Columns.ROOT_FILE.value + DB2_SUFFIX])
+  image_removed = pd.isna(merged_images_df[Column.ROOT_FILE.value + DB2_SUFFIX])
   diff_chunk = merged_images_df.loc[image_removed, REPORT_COLUMNS]
   diff_chunk[DIFF_TYPE] = 'PRESENCE'
   diff_chunk[VALUE_DB1] = 'PRESENT'
@@ -312,7 +254,7 @@ def diff_image_presence(merged_images_df):
   return diff_chunk, image_removed
 
 
-def diff_column(merged_images_df, column: Columns, rows_to_ignore):
+def diff_column(merged_images_df, column: Column, rows_to_ignore):
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
   column_db2 = merged_images_df[column.value + DB2_SUFFIX]
   
@@ -327,24 +269,24 @@ def diff_column(merged_images_df, column: Columns, rows_to_ignore):
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
 
-  # TODO(numeric).
-  if column_db1.dtype in ('float64', 'float32', 'int32', 'int64'):
+  if pd.api.types.is_numeric_dtype(column_db1):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
     
   return diff_chunk, value_altered
 
 
-# def diff_keywords(merged_keywords_df, rows_to_ignore):
-#   # TODO: Only report images not in rows_to_ignore
-#   removed = merged_keywords_df.presence == 'left_only'
-#   diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
-#   diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
-#   diff_chunk[VALUE_DB1] = merged_keywords_df[value_altered, keyword]
-#   diff_chunk[VALUE_DB2] = None
-#   return diff_chunk
-  
+def diff_keywords(merged_keywords_df: pd.DataFrame, rows_to_ignore) -> pd.DataFrame:
+  missing_columns = set(REPORT_COLUMNS).difference(set(merged_keywords_df))
+  assert not missing_columns, missing_columns
+  removed = (merged_keywords_df.presence == 'left_only') & (~rows_to_ignore)
+  diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
+  diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
+  diff_chunk[VALUE_DB1] = merged_keywords_df.loc[removed, 'keyword']
+  diff_chunk[VALUE_DB2] = None
+  return diff_chunk
 
-def compute_diff(merged_dbs: MergedDbs, diff_columns) -> pd.DataFrame:
+
+def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.DataFrame:
   logging.info('compute_diff')
   diff_chunks = []
   image_removed_diff_chunk, image_removed = diff_image_presence(merged_dbs.images_df)
@@ -357,8 +299,8 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns) -> pd.DataFrame:
   diff_df = pd.concat(objs=diff_chunks, axis=0, ignore_index=True, sort=False)
   diff_df = diff_df.sort_values(by=SORT_COLUMNS)
 
-#   keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
-#   diff_chunks.append(keyword_diff_chunk)
+  keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
+  diff_chunks.append(keyword_diff_chunk)
   
   column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
   if VALUE_DELTA in diff_df.columns:
@@ -369,17 +311,18 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns) -> pd.DataFrame:
   return diff_df
  
 
+def diff_catalogs(db1_filename: str, db2_filename: str) -> pd.DataFrame:
+  db1 = load_db(maybe_unzip(db1_filename))
+  db2 = load_db(maybe_unzip(db2_filename))
+  merged_dbs = compute_merge_dbs(db1, db2)
+  diff_df = compute_diff(merged_dbs, DIFF_COLUMNS)
+  return diff_df
+
+
 def main(argv):
   if len(argv) > 1:
     logging.fatal('Unparsed arguments: %s', argv)
-    
-  db1 = load_db(maybe_unzip(FLAGS.db1))
-  db2 = load_db(maybe_unzip(FLAGS.db2))
-  merged_dbs = compute_merge_dbs(db1, db2)
-  diff_df = compute_diff(merged_dbs, DIFF_COLUMNS)
-
-#   merged_keywords_df = db_diff.merge_db_keywords(db1, db2)
-
+  diff_df = diff_catalogs(FLAGS.db1, FLAGS.db2)
   logging.info('Printing diff to stdout.')
   print(diff_df.to_csv(sep='\t', index=False))
   
