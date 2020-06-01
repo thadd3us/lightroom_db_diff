@@ -18,11 +18,12 @@ import maya
 import os
 import pandas as pd
 import sqlite3
+import sys
 import zipfile
 
 from absl import app
 from absl import flags
-from absl import logging
+import logging
 
 from typing import Iterable, Text
 
@@ -205,16 +206,19 @@ def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
 
 def load_db(path: Text):
   logging.info('load_db, path=%s', path)
-  connection = sqlite3.connect(path)
-  cursor = connection.cursor()
   lightroom_db = LightroomDb()
-  lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
-  lightroom_db.images_df[Column.PARSED_CAPTURE_TIME.name] = (
-    lightroom_db.images_df[Column.CAPTURE_TIME.value].map(parse_date_time))
-  lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
-  
-  lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
-  connection.close()
+
+  connection = sqlite3.connect(path)
+  try:
+    cursor = connection.cursor()
+    lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
+    lightroom_db.images_df[Column.PARSED_CAPTURE_TIME.name] = (
+      lightroom_db.images_df[Column.CAPTURE_TIME.value].map(parse_date_time))
+    lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
+
+    lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
+  finally:
+    connection.close()
   return lightroom_db
 
 
@@ -255,6 +259,7 @@ def diff_image_presence(merged_images_df):
 
 
 def diff_column(merged_images_df, column: Column, rows_to_ignore):
+  logging.info('diff_column: %s', column)
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
   column_db2 = merged_images_df[column.value + DB2_SUFFIX]
   
@@ -271,11 +276,13 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore):
 
   if pd.api.types.is_numeric_dtype(column_db1):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
-    
+
   return diff_chunk, value_altered
 
 
 def diff_keywords(merged_keywords_df: pd.DataFrame, rows_to_ignore) -> pd.DataFrame:
+  logging.info('diff_keywords')
+  ROWS TO IGNORE DOESN"T MAKE SENSE FOR MERGED KEYWORDS"
   missing_columns = set(REPORT_COLUMNS).difference(set(merged_keywords_df))
   assert not missing_columns, missing_columns
   removed = (merged_keywords_df.presence == 'left_only') & (~rows_to_ignore)
@@ -296,22 +303,23 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.Da
     diff_chunk, _ = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
-  diff_df = pd.concat(objs=diff_chunks, axis=0, ignore_index=True, sort=False)
-  diff_df = diff_df.sort_values(by=SORT_COLUMNS)
-
   keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
   diff_chunks.append(keyword_diff_chunk)
-  
+
+  diff_df = pd.concat(objs=diff_chunks, axis='index', ignore_index=True, sort=False)
+  diff_df = diff_df.sort_values(by=SORT_COLUMNS)
+
   column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
   if VALUE_DELTA in diff_df.columns:
     column_ordering.append(VALUE_DELTA)
   column_ordering += REPORT_COLUMNS
-  diff_df = diff_df[column_ordering]
+  diff_df = diff_df.loc[:, column_ordering]
   
   return diff_df
  
 
 def diff_catalogs(db1_filename: str, db2_filename: str) -> pd.DataFrame:
+  logging.info('diff_catalogs')
   db1 = load_db(maybe_unzip(db1_filename))
   db2 = load_db(maybe_unzip(db2_filename))
   merged_dbs = compute_merge_dbs(db1, db2)
@@ -328,6 +336,7 @@ def main(argv):
   
 
 if __name__ == '__main__':
+  logging.basicConfig(stream=sys.stderr, level=logging.INFO)
   flags.mark_flag_as_required('db1')
   flags.mark_flag_as_required('db2')
   app.run(main)
