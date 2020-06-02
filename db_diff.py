@@ -148,6 +148,23 @@ LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.
 ;
 """
 
+QUERY_COLLECTIONS = """
+SELECT
+    AgLibraryCollectionImage.image AS image,
+    AgLibraryCollection.name AS collection,
+    AgLibraryFile.idx_filename AS AgLibraryFile_idx_filename,
+    AgLibraryFolder.pathFromRoot AS AgLibraryFolder_pathFromRoot,
+    AgLibraryRootFolder.name AS AgLibraryRootFolder_name,
+    AgLibraryRootFolder.absolutePath AS AgLibraryRootFolder_absolutePath
+FROM AgLibraryCollectionImage
+LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollectionImage.tag
+LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
+LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
+LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
+LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
+;
+"""
+
 ['AgLibraryKeywordImage_id_local', 'AgLibraryKeywordImage_image',
        'AgLibraryKeywordImage_tag', ]
 ['AgLibraryKeyword_id_local',
@@ -282,10 +299,9 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore):
 
 def diff_keywords(merged_keywords_df: pd.DataFrame, rows_to_ignore) -> pd.DataFrame:
   logging.info('diff_keywords')
-  ROWS TO IGNORE DOESN"T MAKE SENSE FOR MERGED KEYWORDS"
   missing_columns = set(REPORT_COLUMNS).difference(set(merged_keywords_df))
   assert not missing_columns, missing_columns
-  removed = (merged_keywords_df.presence == 'left_only') & (~rows_to_ignore)
+  removed = (merged_keywords_df.presence == 'left_only')
   diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
   diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
   diff_chunk[VALUE_DB1] = merged_keywords_df.loc[removed, 'keyword']
