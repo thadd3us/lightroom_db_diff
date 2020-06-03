@@ -34,6 +34,9 @@ class DbDiffTest(unittest.TestCase):
       self.maxDiff = None
       self.assertEqual(golden, value)
 
+  def test_no_golden_update(self):
+    self.assertFalse(UPDATE_GOLDEN_FILES)
+
   def test_sequence(self):
     html = db_diff.diff_catalog_sequence(TEST_CATALOG_FILE_NAMES)
     self.check_match('test_sequence.html', html)

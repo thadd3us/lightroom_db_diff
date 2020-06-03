@@ -2,11 +2,7 @@
 
 Example command line:
 
-python db_diff.py \
-    testdata/test_catalogs/test_catalog_01/test_catalog_01_fresh.lrcat \
-    testdata/test_catalogs/test_catalog_02/test_catalog_02_gps_captions_collections_keywords.lrcat \
-    testdata/test_catalogs/test_catalog_03/test_catalog_03_two_more_photos_and_edits.lrcat \
-    testdata/test_catalogs/test_catalog_04/test_catalog_04_more_face_tags_gps_edit.lrcat
+python db_diff.py testdata/test_catalogs/test_catalog_*/*.lrcat > z.html
 """
 
 import enum
