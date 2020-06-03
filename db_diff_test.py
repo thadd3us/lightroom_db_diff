@@ -11,10 +11,10 @@ UPDATE_GOLDEN_FILES = False
 
 
 TEST_CATALOG_FILE_NAMES = [
-  'testdata/test_catalogs/test_catalog_01/test_catalog_01_fresh.lrcat',
-  'testdata/test_catalogs/test_catalog_02/test_catalog_02_gps_captions_collections_keywords.lrcat',
-  'testdata/test_catalogs/test_catalog_03/test_catalog_03_two_more_photos_and_edits.lrcat',
-  'testdata/test_catalogs/test_catalog_04/test_catalog_04_more_face_tags_gps_edit.lrcat',
+  'testdata/test_catalogs/test_catalog_00/test_catalog_fresh.lrcat',
+  'testdata/test_catalogs/test_catalog_01/test_catalog_gps_captions_collections_keywords.lrcat',
+  'testdata/test_catalogs/test_catalog_02/test_catalog_two_more_photos_and_edits.lrcat',
+  'testdata/test_catalogs/test_catalog_03/test_catalog_more_face_tags_gps_edit.lrcat',
 ]
 
 

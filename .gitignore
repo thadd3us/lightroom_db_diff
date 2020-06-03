@@ -13,3 +13,6 @@ previews.db
 
 .DS_Store
 root-pixels.db
+*.lrcat-shm
+*.lrcat-wal
+
