@@ -7,7 +7,7 @@ import unittest
 
 import db_diff
 
-UPDATE_GOLDEN_FILES = True
+UPDATE_GOLDEN_FILES = False
 
 
 TEST_CATALOG_FILE_NAMES = [

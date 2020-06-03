@@ -19,6 +19,7 @@ import urllib
 import zipfile
 from typing import Iterable, List, Optional, Text, Tuple
 
+import geopy.distance
 import maya
 import pandas as pd
 from absl import app
@@ -329,7 +330,22 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore) -> pd.DataFram
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
 
-  if pd.api.types.is_numeric_dtype(column_db1):
+  if column == Column.GPS_LOCATION:
+    def gps_location_diff(s: pd.Series):
+      c1 = s.iloc[0]
+      c2 = s.iloc[1]
+      if pd.isna(c1) and pd.isna(c2):
+        return None
+      if pd.isna(c1) or pd.isna(c2):
+        return float('inf')
+      for c in c1 + c2:
+        if pd.isna(c):
+          return float('inf')
+      d = geopy.distance.geodesic(c1, c2).meters
+      return f'{d} meters'
+    d = diff_chunk[[VALUE_DB2, VALUE_DB1]].apply(gps_location_diff, axis='columns', result_type='reduce')
+    diff_chunk[VALUE_DELTA] = d
+  elif pd.api.types.is_numeric_dtype(column_db1):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
   return diff_chunk
 
