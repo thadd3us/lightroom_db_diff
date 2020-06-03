@@ -12,3 +12,4 @@ helper.db
 previews.db
 
 .DS_Store
+root-pixels.db
