@@ -12,6 +12,7 @@ jupyter = "*"
 absl-py = "*"
 plotly-express = "*"
 pytest-watch = "*"
+geopy = "*"
 
 [requires]
 python_version = "3.7"

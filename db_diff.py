@@ -11,10 +11,11 @@ python db_diff.py \
 
 import enum
 import glob
+import html
 import logging
 import os
 import sqlite3
-import sys
+import urllib
 import zipfile
 from typing import Iterable, List, Optional, Text, Tuple
 
@@ -56,14 +57,23 @@ def maybe_unzip(filename: str) -> str:
 @enum.unique
 class Column(enum.Enum):
   ROOT_FILE = 'Adobe_images_rootFile'
-  CAPTION = 'AgLibraryIPTC_caption'
+
+  FILENAME = 'AgLibraryFile_idx_filename'
+  PATH_FROM_ROOT = 'AgLibraryFolder_pathFromRoot'
+  ROOT_PATH = 'AgLibraryRootFolder_absolutePath'
+  IMAGE_LINK = 'IMAGE_LINK'
+
   GPS_LATITUDE = 'AgHarvestedExifMetadata_gpsLatitude'
   GPS_LONGITUDE = 'AgHarvestedExifMetadata_gpsLongitude'
+
   RATING = 'Adobe_images_rating'
   COLOR_LABELS = 'Adobe_images_colorLabels'
   CAPTURE_TIME = 'Adobe_images_captureTime'
   HASH = 'AgLibraryFile_importHash'
   ID_GLOBAL = 'Adobe_images_id_global'
+
+  CAPTION = 'AgLibraryIPTC_caption'
+  GPS_LOCATION = 'GPS_LOCATION'
   PARSED_CAPTURE_TIME = 'PARSED_CAPTURE_TIME'
 
   KEYWORD = 'AgLibraryKeyword_name'
@@ -72,8 +82,7 @@ class Column(enum.Enum):
 
 DIFF_COLUMNS = [
   Column.CAPTION,
-  Column.GPS_LATITUDE,
-  Column.GPS_LONGITUDE,
+  Column.GPS_LOCATION,
   Column.RATING,
   Column.COLOR_LABELS,
   Column.PARSED_CAPTURE_TIME,
@@ -82,34 +91,33 @@ DIFF_COLUMNS = [
 
 
 REPORT_COLUMNS = [
-  'AgLibraryFile_idx_filename' + DB1_SUFFIX,
-  'AgLibraryFolder_pathFromRoot' + DB1_SUFFIX,
-  'AgLibraryRootFolder_absolutePath' + DB1_SUFFIX,
+  Column.FILENAME.value + DB1_SUFFIX,
+  Column.PATH_FROM_ROOT.value + DB1_SUFFIX,
+  Column.ROOT_PATH.value + DB1_SUFFIX,
+  Column.IMAGE_LINK.value + DB1_SUFFIX,
 ]
 
+# As of
 SORT_COLUMNS = [
   'DIFF_TYPE',
-  'AgLibraryRootFolder_absolutePath' + DB1_SUFFIX,
-  'AgLibraryFolder_pathFromRoot' + DB1_SUFFIX,
-  'AgLibraryFile_idx_filename' + DB1_SUFFIX,
+  Column.ROOT_PATH.value + DB1_SUFFIX,
+  Column.PATH_FROM_ROOT.value + DB1_SUFFIX,
+  Column.FILENAME.value + DB1_SUFFIX,
 ]
+# assert set(SORT_COLUMNS).issubset(set(REPORT_COLUMNS))
 
-VACUOUS_CAPTIONS = set([
-  '',
-  'OLYMPUS DIGITAL CAMERA',
-  'Exif JPEG',
-])
+VACUOUS_CAPTIONS = {'', 'OLYMPUS DIGITAL CAMERA', 'Exif JPEG'}
 
 TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 
-QUERY_SNIPPET_SELECT_IMAGE_LOCATION = """
-    0 AS TABLE_MARKER_Adobe_images,
+QUERY_SNIPPET_SELECT_IMAGE_LOCATION = f"""
+    0 AS {TABLE_MARKER_PREFIX}Adobe_images,
     Adobe_images.*,
-    0 AS TABLE_MARKER_AgLibraryFile,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryFile,
     AgLibraryFile.*,
-    0 AS TABLE_MARKER_AgLibraryFolder,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryFolder,
     AgLibraryFolder.*,
-    0 AS TABLE_MARKER_AgLibraryRootFolder,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryRootFolder,
     AgLibraryRootFolder.*
 """
 
@@ -124,9 +132,9 @@ LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.
 # Using dummy columns to mark which columns come from which tables.
 QUERY_IMAGES = f"""
 SELECT
-    0 AS TABLE_MARKER_AgLibraryIPTC,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryIPTC,
     AgLibraryIPTC.*,
-    0 AS TABLE_MARKER_AgHarvestedExifMetadata,
+    0 AS {TABLE_MARKER_PREFIX}AgHarvestedExifMetadata,
     AgHarvestedExifMetadata.*,
     {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
 FROM Adobe_images
@@ -139,30 +147,30 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
 
 QUERY_KEYWORDS = f"""
 SELECT
-    0 AS TABLE_MARKER_AgLibraryKeywordImage,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryKeywordImage,
     AgLibraryKeywordImage.*,
-    0 AS TABLE_MARKER_AgLibraryKeyword,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryKeyword,
     AgLibraryKeyword.*,
-    {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
+    0 AS {TABLE_MARKER_PREFIX}Adobe_images,
+    Adobe_images.id_global    
 FROM AgLibraryKeywordImage 
 LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
 LEFT JOIN AgLibraryKeyword ON AgLibraryKeyword.id_local = AgLibraryKeywordImage.tag
-{QUERY_SNIPPET_JOIN_IMAGE_LOCATION}
 ;
 """
 
 
 QUERY_COLLECTIONS = f"""
 SELECT
-    0 AS TABLE_MARKER_AgLibraryCollectionImage,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryCollectionImage,
     AgLibraryCollectionImage.*,
-    0 AS TABLE_MARKER_AgLibraryCollection,
+    0 AS {TABLE_MARKER_PREFIX}AgLibraryCollection,
     AgLibraryCollection.*,
-    {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
+    0 AS {TABLE_MARKER_PREFIX}Adobe_images,
+    Adobe_images.id_global    
 FROM AgLibraryCollectionImage 
 LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryCollectionImage.image
 LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollectionImage.collection
-{QUERY_SNIPPET_JOIN_IMAGE_LOCATION}
 ;
 """
 
@@ -183,7 +191,7 @@ class MergedDbs(object):
     self.collections_df = None
 
   
-def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
+def query_to_data_frame(cursor: sqlite3.Cursor, query: Text) -> pd.DataFrame:
   cursor.execute(query)
   rows = cursor.fetchall()
   column_names = []
@@ -203,7 +211,7 @@ def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
   return df
 
 
-def parse_date_time(date_time_str: Optional[str]) -> maya.MayaDT:
+def parse_date_time(date_time_str: Optional[str]) -> Optional[maya.MayaDT]:
   if date_time_str is None:
     return None
   try:
@@ -221,12 +229,38 @@ def load_db(path: str) -> LightroomDb:
   try:
     cursor = connection.cursor()
     lightroom_db.images_df = query_to_data_frame(cursor, QUERY_IMAGES)
-    lightroom_db.images_df[Column.PARSED_CAPTURE_TIME.name] = (
+    lightroom_db.images_df[Column.PARSED_CAPTURE_TIME.value] = (
       lightroom_db.images_df[Column.CAPTURE_TIME.value].map(parse_date_time))
+
+    def lat_lon_join(x):
+      if pd.isna(x.iloc[0]) and pd.isna(x.iloc[1]):
+        return None
+      return (x.iloc[0], x.iloc[1])
+    lightroom_db.images_df[Column.GPS_LOCATION.value] = (
+      lightroom_db.images_df[[Column.GPS_LATITUDE.value, Column.GPS_LONGITUDE.value]].apply(
+        lat_lon_join, axis='columns'))
+
+    def image_link(x):
+      filename = os.path.join(*x.values.tolist())
+      escaped = urllib.parse.quote(filename, safe="/")
+      # return f'<a href="file://{urllib.parse.quote(filename, safe="/")}">link</a>'
+      return f'file://{escaped}'
+
+    lightroom_db.images_df[Column.IMAGE_LINK.value] = (
+      lightroom_db.images_df[[Column.ROOT_PATH.value, Column.PATH_FROM_ROOT.value, Column.FILENAME.value]].apply(
+        image_link, axis='columns'))
+
+    # Not using the index, just checking integrity.
     lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
 
-    lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
-    lightroom_db.collections_df = query_to_data_frame(cursor, QUERY_COLLECTIONS)
+    keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
+    keywords_df = keywords_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value, right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
+    lightroom_db.keywords_df = keywords_df
+
+    collections_df = query_to_data_frame(cursor, QUERY_COLLECTIONS)
+    collections_df = collections_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value, right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
+    lightroom_db.collections_df = collections_df
+
   finally:
     connection.close()
   return lightroom_db
@@ -347,34 +381,48 @@ def diff_catalogs(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   return diff_df
 
 
-def diff_catalog_sequence(db_filenames: List[str]) -> str:
-  assert len(db_filenames) >= 2, db_filenames
-  db1 = None
-  db2 = load_db(maybe_unzip(db_filenames[0]))
+def diff_catalog_sequence(db_file_names: List[str]) -> str:
+  assert len(db_file_names) >= 2, db_file_names
+  db2 = load_db(maybe_unzip(db_file_names[0]))
   lines = []
-  for i in range(1, len(db_filenames)):
+  for i in range(1, len(db_file_names)):
     db1 = db2  # Push the right one to the left.
-    db2 = load_db(maybe_unzip(db_filenames[i]))
+    db2 = load_db(maybe_unzip(db_file_names[i]))
     diff_df = diff_catalogs(db1, db2)
     lines.append(f'<h1>Compare {i-1} vs {i}</h1>')
     lines.append('<ul>')
-    lines.append(f'<li> db1: {db_filenames[i-1]}')
-    lines.append(f'<li> db2: {db_filenames[i]}')
+    lines.append(f'<li> db1: {db_file_names[i-1]}')
+    lines.append(f'<li> db2: {db_file_names[i]}')
     lines.append('</ul>')
-    lines.append(diff_df.to_html(index=False))
+
+    def basic_formatter(value):
+      if pd.isna(value):
+        return ''
+      return html.escape(str(value))
+
+    formatters = {}
+    for column_name in diff_df.columns:
+      if Column.IMAGE_LINK.value in column_name:
+        formatters[column_name] = lambda x: x
+      else:
+        formatters[column_name] = basic_formatter
+
+    lines.append(diff_df.to_html(
+      formatters=formatters, col_space=100, index=False, escape=False, justify='left', na_rep='',
+      render_links=True))
     lines.append('<p>')
     lines.append('If the above looks OK, you can remove the left catalog (db1) using:')
     lines.append('<pre>')
-    lines.append(f'rm "{db_filenames[i-1]}"')
+    lines.append(f'rm "{db_file_names[i-1]}"')
     lines.append('</pre>')
   return '\n'.join(lines)
 
 
 def main(argv) -> None:
-  db_filenames = argv[1:]
-  print(diff_catalog_sequence(db_filenames))
+  db_file_names = argv[1:]
+  print(diff_catalog_sequence(db_file_names))
 
 
 if __name__ == '__main__':
-  #logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
+  # logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
   app.run(main)
