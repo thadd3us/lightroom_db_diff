@@ -1,35 +1,29 @@
-"""Compares two versions of a Lightroom database.
+"""Compares multiple versions of a Lightroom Catalog database.
 
 Example command line:
 
-python3 db_diff.py \
-    --db1 "/Users/thad/Dropbox/thad/Lightrooom/Backups/2020-02-27 0339/Lightroom Catalog-4.lrcat.zip" \
-    --db2 "/Users/thad/Dropbox/thad/Lightrooom/Backups/2020-05-12 1526/Lightroom Catalog-4.lrcat.zip" \
-    --alsologtostderr
-
-TODO:
-* Labels, collections, faces.
-* Publish on github
+python db_diff.py \
+    testdata/test_catalogs/test_catalog_01/test_catalog_01_fresh.lrcat \
+    testdata/test_catalogs/test_catalog_02/test_catalog_02_gps_captions_collections_keywords.lrcat \
+    testdata/test_catalogs/test_catalog_03/test_catalog_03_two_more_photos_and_edits.lrcat \
+    testdata/test_catalogs/test_catalog_04/test_catalog_04_more_face_tags_gps_edit.lrcat
 """
 
 import enum
 import glob
-import maya
+import logging
 import os
-import pandas as pd
 import sqlite3
 import sys
 import zipfile
+from typing import Iterable, List, Optional, Text, Tuple
 
+import maya
+import pandas as pd
 from absl import app
 from absl import flags
-import logging
-
-from typing import Iterable, Text
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('db1', None, 'First database.')
-flags.DEFINE_string('db2', None, 'Second database.')
 
 DB1_SUFFIX = '_db1'
 DB2_SUFFIX = '_db2'
@@ -173,16 +167,6 @@ LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollect
 """
 
 
-def parse_date_time(date_time_str):
-  if date_time_str is None:
-    return None
-  try:
-    return maya.parse(date_time_str)
-  except ValueError as e:
-    logging.error('Unable to parse time: %s\n%s', date_time_str, e)
-  return None
-
-
 class LightroomDb(object):
   
   def __init__(self):
@@ -219,7 +203,17 @@ def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
   return df
 
 
-def load_db(path: Text):
+def parse_date_time(date_time_str: Optional[str]) -> maya.MayaDT:
+  if date_time_str is None:
+    return None
+  try:
+    return maya.parse(date_time_str)
+  except ValueError as e:
+    logging.error('Unable to parse time: %s\n%s', date_time_str, e)
+  return None
+
+
+def load_db(path: str) -> LightroomDb:
   logging.info('load_db, path=%s', path)
   lightroom_db = LightroomDb()
 
@@ -266,7 +260,6 @@ def merge_db_collections(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   return merged_collections_df
 
 
-
 def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
   logging.info('computed_merge_dbs')
   merged_dbs = MergedDbs()
@@ -276,7 +269,7 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
   return merged_dbs
   
 
-def diff_image_presence(merged_images_df):
+def diff_image_presence(merged_images_df) -> Tuple[pd.DataFrame, pd.Series]:
   logging.info('diff_image_presence')
   image_removed = pd.isna(merged_images_df[Column.ROOT_FILE.value + DB2_SUFFIX])
   diff_chunk = merged_images_df.loc[image_removed, REPORT_COLUMNS]
@@ -286,7 +279,7 @@ def diff_image_presence(merged_images_df):
   return diff_chunk, image_removed
 
 
-def diff_column(merged_images_df, column: Column, rows_to_ignore):
+def diff_column(merged_images_df, column: Column, rows_to_ignore) -> pd.DataFrame:
   logging.info('diff_column: %s', column)
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
   column_db2 = merged_images_df[column.value + DB2_SUFFIX]
@@ -304,8 +297,7 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore):
 
   if pd.api.types.is_numeric_dtype(column_db1):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
-
-  return diff_chunk, value_altered
+  return diff_chunk
 
 
 def diff_keywords_or_collections(merged_keywords_df: pd.DataFrame, name_column: Column) -> pd.DataFrame:
@@ -327,7 +319,7 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.Da
   diff_chunks.append(image_removed_diff_chunk)
   
   for column in diff_columns:
-    diff_chunk, _ = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
+    diff_chunk = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
   keyword_diff_chunk = diff_keywords_or_collections(merged_dbs.keywords_df, name_column=Column.KEYWORD)
@@ -348,25 +340,41 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.Da
   return diff_df
  
 
-def diff_catalogs(db1_filename: str, db2_filename: str) -> pd.DataFrame:
+def diff_catalogs(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('diff_catalogs')
-  db1 = load_db(maybe_unzip(db1_filename))
-  db2 = load_db(maybe_unzip(db2_filename))
   merged_dbs = compute_merge_dbs(db1, db2)
   diff_df = compute_diff(merged_dbs, DIFF_COLUMNS)
   return diff_df
 
 
-def main(argv):
-  if len(argv) > 1:
-    logging.fatal('Unparsed arguments: %s', argv)
-  diff_df = diff_catalogs(FLAGS.db1, FLAGS.db2)
-  logging.info('Printing diff to stdout.')
-  print(diff_df.to_csv(sep='\t', index=False))
-  
+def diff_catalog_sequence(db_filenames: List[str]) -> str:
+  assert len(db_filenames) >= 2, db_filenames
+  db1 = None
+  db2 = load_db(maybe_unzip(db_filenames[0]))
+  lines = []
+  for i in range(1, len(db_filenames)):
+    db1 = db2  # Push the right one to the left.
+    db2 = load_db(maybe_unzip(db_filenames[i]))
+    diff_df = diff_catalogs(db1, db2)
+    lines.append(f'<h1>Compare {i-1} vs {i}</h1>')
+    lines.append('<ul>')
+    lines.append(f'<li> db1: {db_filenames[i-1]}')
+    lines.append(f'<li> db2: {db_filenames[i]}')
+    lines.append('</ul>')
+    lines.append(diff_df.to_html(index=False))
+    lines.append('<p>')
+    lines.append('If the above looks OK, you can remove the left catalog (db1) using:')
+    lines.append('<pre>')
+    lines.append(f'rm "{db_filenames[i-1]}"')
+    lines.append('</pre>')
+  return '\n'.join(lines)
+
+
+def main(argv) -> None:
+  db_filenames = argv[1:]
+  print(diff_catalog_sequence(db_filenames))
+
 
 if __name__ == '__main__':
-  logging.basicConfig(stream=sys.stderr, level=logging.INFO)
-  flags.mark_flag_as_required('db1')
-  flags.mark_flag_as_required('db2')
+  #logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
   app.run(main)

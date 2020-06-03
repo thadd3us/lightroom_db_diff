@@ -1,12 +1,12 @@
 """Tests for db_diff.py.
 """
-import sys
-import db_diff
-import unittest
 import logging
+import sys
+import unittest
 
+import db_diff
 
-TEST_CATALOGS = [
+TEST_CATALOG_FILE_NAMES = [
   'testdata/test_catalogs/test_catalog_01/test_catalog_01_fresh.lrcat',
   'testdata/test_catalogs/test_catalog_02/test_catalog_02_gps_captions_collections_keywords.lrcat',
   'testdata/test_catalogs/test_catalog_03/test_catalog_03_two_more_photos_and_edits.lrcat',
@@ -14,17 +14,23 @@ TEST_CATALOGS = [
 ]
 
 
+TEST_LIGHTROOM_DBS = [db_diff.load_db(db_diff.maybe_unzip(f)) for f in TEST_CATALOG_FILE_NAMES]
+
+
 class DbDiffTest(unittest.TestCase):
-  
+
+  def test_sequence(self):
+    db_diff.diff_catalog_sequence(TEST_CATALOG_FILE_NAMES)
+
   def test_01_02(self):
-    diff_df = db_diff.diff_catalogs(TEST_CATALOGS[0], TEST_CATALOGS[1])
+    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[0], TEST_LIGHTROOM_DBS[1])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1"""
     self.maxDiff = None
     actual_csv = diff_df.to_csv(index=False).strip()
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')
 
   def test_02_01(self):
-    diff_df = db_diff.diff_catalogs(TEST_CATALOGS[1], TEST_CATALOGS[0])
+    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[1], TEST_LIGHTROOM_DBS[0])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
 GPS_LATITUDE,48.13746461620167,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 GPS_LATITUDE,37.82686602640833,,,GoldenGateBridge-001.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
@@ -45,7 +51,7 @@ REMOVED FROM KEYWORD,Martin Luther King Jr.,,,"Martin_Luther_King,_Jr..jpg",,/Us
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')
 
   def test_04_03(self):
-    diff_df = db_diff.diff_catalogs(TEST_CATALOGS[3], TEST_CATALOGS[2])
+    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[3], TEST_LIGHTROOM_DBS[2])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
 GPS_LATITUDE,37.827544289161665,37.827827756526666,0.0002834673650013997,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 GPS_LONGITUDE,-122.48189497883833,-122.48773672802666,-0.005841749188334688,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
@@ -58,7 +64,7 @@ REMOVED FROM KEYWORD,Andreas Meurer,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')
 
   def test_03_02(self):
-    diff_df = db_diff.diff_catalogs(TEST_CATALOGS[2], TEST_CATALOGS[1])
+    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[2], TEST_LIGHTROOM_DBS[1])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
 CAPTION,View from Petersdom.  August 2006.,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 CAPTION,View over Africa.,,,1200px-The_Earth_seen_from_Apollo_17.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
