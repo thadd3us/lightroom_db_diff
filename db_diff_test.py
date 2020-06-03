@@ -27,17 +27,19 @@ class DbDiffTest(unittest.TestCase):
     diff_df = db_diff.diff_catalogs(TEST_CATALOGS[1], TEST_CATALOGS[0])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
 GPS_LATITUDE,48.13746461620167,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-GPS_LONGITUDE,11.575437771163333,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-RATING,3.0,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-KEYWORD REMOVED,München,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-KEYWORD REMOVED,Erde,,,1200px-The_Earth_seen_from_Apollo_17.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 GPS_LATITUDE,37.82686602640833,,,GoldenGateBridge-001.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+GPS_LONGITUDE,11.575437771163333,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 GPS_LONGITUDE,-122.48635834924333,,,GoldenGateBridge-001.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+RATING,3.0,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 RATING,3.0,,,GoldenGateBridge-001.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 RATING,4.0,,,Hermann_Hesse_2.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-KEYWORD REMOVED,Hermann Hesse,,,Hermann_Hesse_2.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
 RATING,5.0,,,"Martin_Luther_King,_Jr..jpg",,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
-KEYWORD REMOVED,Martin Luther King Jr.,,,"Martin_Luther_King,_Jr..jpg",,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/"""
+REMOVED FROM COLLECTION,Heroes,,,Hermann_Hesse_2.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+REMOVED FROM COLLECTION,Heroes,,,"Martin_Luther_King,_Jr..jpg",,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+REMOVED FROM KEYWORD,München,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+REMOVED FROM KEYWORD,Erde,,,1200px-The_Earth_seen_from_Apollo_17.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+REMOVED FROM KEYWORD,Hermann Hesse,,,Hermann_Hesse_2.jpg,,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/
+REMOVED FROM KEYWORD,Martin Luther King Jr.,,,"Martin_Luther_King,_Jr..jpg",,/Users/thad/Google Drive/src/lightroom/testdata/test_photos/"""
     self.maxDiff = None
     actual_csv = diff_df.to_csv(index=False).strip()
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')
@@ -45,12 +47,12 @@ KEYWORD REMOVED,Martin Luther King Jr.,,,"Martin_Luther_King,_Jr..jpg",,/Users/t
   def test_04_03(self):
     diff_df = db_diff.diff_catalogs(TEST_CATALOGS[3], TEST_CATALOGS[2])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
-KEYWORD REMOVED,Ritchie,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-KEYWORD REMOVED,Andreas von Holst,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-KEYWORD REMOVED,Michael Breitkopf,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-KEYWORD REMOVED,Andreas Meurer,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 GPS_LATITUDE,37.827544289161665,37.827827756526666,0.0002834673650013997,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-GPS_LONGITUDE,-122.48189497883833,-122.48773672802666,-0.005841749188334688,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/"""
+GPS_LONGITUDE,-122.48189497883833,-122.48773672802666,-0.005841749188334688,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM KEYWORD,Ritchie,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM KEYWORD,Andreas von Holst,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM KEYWORD,Michael Breitkopf,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM KEYWORD,Andreas Meurer,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/"""
     self.maxDiff = None
     actual_csv = diff_df.to_csv(index=False).strip()
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')
@@ -59,17 +61,22 @@ GPS_LONGITUDE,-122.48189497883833,-122.48773672802666,-0.005841749188334688,Gold
     diff_df = db_diff.diff_catalogs(TEST_CATALOGS[2], TEST_CATALOGS[1])
     expected_csv = """DIFF_TYPE,value_db1,value_db2,value_delta,AgLibraryFile_idx_filename_db1,AgLibraryFolder_pathFromRoot_db1,AgLibraryRootFolder_absolutePath_db1
 CAPTION,View from Petersdom.  August 2006.,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-GPS_LATITUDE,48.13732308062167,48.13746461620167,0.00014153557999918576,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-GPS_LONGITUDE,11.575565271141667,11.575437771163333,-0.00012749997833338966,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-RATING,4.0,3.0,-1.0,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 CAPTION,View over Africa.,,,1200px-The_Earth_seen_from_Apollo_17.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+CAPTION,"The Golden Gate Bridge in San Francisco, CA at sunset.  Taken from Marin.","The Golden Gate Bridge in San Francisco, CA at sunset.",,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+GPS_LATITUDE,48.13732308062167,48.13746461620167,0.00014153557999918576,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+GPS_LATITUDE,37.827827756526666,37.82686602640833,-0.0009617301183340032,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+GPS_LONGITUDE,11.575565271141667,11.575437771163333,-0.00012749997833338966,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+GPS_LONGITUDE,-122.48773672802666,-122.48635834924333,0.0013783787833290262,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 PRESENCE,PRESENT,ABSENT,,1920px-Aldrin_Apollo_11_original.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
 PRESENCE,PRESENT,ABSENT,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-KEYWORD REMOVED,Campino,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-CAPTION,"The Golden Gate Bridge in San Francisco, CA at sunset.  Taken from Marin.","The Golden Gate Bridge in San Francisco, CA at sunset.",,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-GPS_LATITUDE,37.827827756526666,37.82686602640833,-0.0009617301183340032,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-GPS_LONGITUDE,-122.48773672802666,-122.48635834924333,0.0013783787833290262,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
-RATING,5.0,4.0,-1.0,Hermann_Hesse_2.jpg,FastFoto/test_photos/,/Users/thad/Pictures/"""
+RATING,4.0,3.0,-1.0,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+RATING,5.0,4.0,-1.0,Hermann_Hesse_2.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM COLLECTION,Landmarks,,,1200px-Rathaus_and_Marienplatz_from_Peterskirche_-_August_2006.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM COLLECTION,Helden,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM COLLECTION,Landmarks,,,GoldenGateBridge-001.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM COLLECTION,Helden,,,Hermann_Hesse_2.jpg,FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM COLLECTION,Helden,,,"Martin_Luther_King,_Jr..jpg",FastFoto/test_photos/,/Users/thad/Pictures/
+REMOVED FROM KEYWORD,Campino,,,1_Live_Krone_2013_dth_1.jpg,FastFoto/test_photos/,/Users/thad/Pictures/"""
     self.maxDiff = None
     actual_csv = diff_df.to_csv(index=False).strip()
     self.assertEqual(actual_csv, expected_csv, f'actual=\n{actual_csv}')

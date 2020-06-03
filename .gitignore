@@ -1,3 +1,14 @@
-/testdata/test_catalogs/test_catalog_01/test_catalog_01_fresh Previews.lrdata/9/90A5/90A53874-ACC1-45EE-A843-81BFFE893F0A-f80589d3778fb12e15d11426e7c45e33.lrprev
 /.project
-/.idea/.gitignore
+/.ipynb_checkpoints
+/.pytest_cache
+/.idea
+__pycache__
+.pydevproject
+
+notebook.ipynb
+
+*.lrprev
+helper.db
+previews.db
+
+.DS_Store

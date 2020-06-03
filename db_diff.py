@@ -72,6 +72,9 @@ class Column(enum.Enum):
   ID_GLOBAL = 'Adobe_images_id_global'
   PARSED_CAPTURE_TIME = 'PARSED_CAPTURE_TIME'
 
+  KEYWORD = 'AgLibraryKeyword_name'
+  COLLECTION = 'AgLibraryCollection_name'
+
 
 DIFF_COLUMNS = [
   Column.CAPTION,
@@ -91,6 +94,7 @@ REPORT_COLUMNS = [
 ]
 
 SORT_COLUMNS = [
+  'DIFF_TYPE',
   'AgLibraryRootFolder_absolutePath' + DB1_SUFFIX,
   'AgLibraryFolder_pathFromRoot' + DB1_SUFFIX,
   'AgLibraryFile_idx_filename' + DB1_SUFFIX,
@@ -104,11 +108,7 @@ VACUOUS_CAPTIONS = set([
 
 TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 
-# Using *s below since I don't know the DB schema well, and want to notice
-# if new things appear.
-# Using dummy columns to mark which columns come from which tables.
-QUERY_IMAGES = """
-SELECT
+QUERY_SNIPPET_SELECT_IMAGE_LOCATION = """
     0 AS TABLE_MARKER_Adobe_images,
     Adobe_images.*,
     0 AS TABLE_MARKER_AgLibraryFile,
@@ -116,64 +116,61 @@ SELECT
     0 AS TABLE_MARKER_AgLibraryFolder,
     AgLibraryFolder.*,
     0 AS TABLE_MARKER_AgLibraryRootFolder,
-    AgLibraryRootFolder.*,
+    AgLibraryRootFolder.*
+"""
+
+QUERY_SNIPPET_JOIN_IMAGE_LOCATION = """
+LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
+LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
+LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
+"""
+
+# Using *s below since I don't know the DB schema well, and want to notice
+# if new things appear.
+# Using dummy columns to mark which columns come from which tables.
+QUERY_IMAGES = f"""
+SELECT
     0 AS TABLE_MARKER_AgLibraryIPTC,
     AgLibraryIPTC.*,
     0 AS TABLE_MARKER_AgHarvestedExifMetadata,
-    AgHarvestedExifMetadata.*
+    AgHarvestedExifMetadata.*,
+    {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
 FROM Adobe_images
-LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
-LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
-LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
 LEFT JOIN AgLibraryIPTC ON AgLibraryIPTC.image = Adobe_images.id_local
 LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_images.id_local
+{QUERY_SNIPPET_JOIN_IMAGE_LOCATION}
 ;
 """
 
 
-QUERY_KEYWORDS = """
+QUERY_KEYWORDS = f"""
 SELECT
-    AgLibraryKeywordImage.image AS image,
-    AgLibraryKeyword.name AS keyword,
-    AgLibraryFile.idx_filename AS AgLibraryFile_idx_filename,
-    AgLibraryFolder.pathFromRoot AS AgLibraryFolder_pathFromRoot,
-    AgLibraryRootFolder.name AS AgLibraryRootFolder_name,
-    AgLibraryRootFolder.absolutePath AS AgLibraryRootFolder_absolutePath
-FROM AgLibraryKeywordImage
+    0 AS TABLE_MARKER_AgLibraryKeywordImage,
+    AgLibraryKeywordImage.*,
+    0 AS TABLE_MARKER_AgLibraryKeyword,
+    AgLibraryKeyword.*,
+    {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
+FROM AgLibraryKeywordImage 
+LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
 LEFT JOIN AgLibraryKeyword ON AgLibraryKeyword.id_local = AgLibraryKeywordImage.tag
-LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
-LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
-LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
-LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
+{QUERY_SNIPPET_JOIN_IMAGE_LOCATION}
 ;
 """
 
-QUERY_COLLECTIONS = """
+
+QUERY_COLLECTIONS = f"""
 SELECT
-    AgLibraryCollectionImage.image AS image,
-    AgLibraryCollection.name AS collection,
-    AgLibraryFile.idx_filename AS AgLibraryFile_idx_filename,
-    AgLibraryFolder.pathFromRoot AS AgLibraryFolder_pathFromRoot,
-    AgLibraryRootFolder.name AS AgLibraryRootFolder_name,
-    AgLibraryRootFolder.absolutePath AS AgLibraryRootFolder_absolutePath
-FROM AgLibraryCollectionImage
-LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollectionImage.tag
-LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
-LEFT JOIN AgLibraryFile ON AgLibraryFile.id_local = Adobe_images.rootFile
-LEFT JOIN AgLibraryFolder ON AgLibraryFolder.id_local = AgLibraryFile.folder
-LEFT JOIN AgLibraryRootFolder ON AgLibraryRootFolder.id_local = AgLibraryFolder.rootFolder
+    0 AS TABLE_MARKER_AgLibraryCollectionImage,
+    AgLibraryCollectionImage.*,
+    0 AS TABLE_MARKER_AgLibraryCollection,
+    AgLibraryCollection.*,
+    {QUERY_SNIPPET_SELECT_IMAGE_LOCATION}
+FROM AgLibraryCollectionImage 
+LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryCollectionImage.image
+LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollectionImage.collection
+{QUERY_SNIPPET_JOIN_IMAGE_LOCATION}
 ;
 """
-
-['AgLibraryKeywordImage_id_local', 'AgLibraryKeywordImage_image',
-       'AgLibraryKeywordImage_tag', ]
-['AgLibraryKeyword_id_local',
-       'AgLibraryKeyword_id_global', 'AgLibraryKeyword_dateCreated',
-       'AgLibraryKeyword_genealogy', 'AgLibraryKeyword_imageCountCache',
-       'AgLibraryKeyword_includeOnExport', 'AgLibraryKeyword_includeParents',
-       'AgLibraryKeyword_includeSynonyms', 'AgLibraryKeyword_keywordType',
-       'AgLibraryKeyword_lastApplied', 'AgLibraryKeyword_lc_name',
-       'AgLibraryKeyword_name', 'AgLibraryKeyword_parent']
 
 
 def parse_date_time(date_time_str):
@@ -186,12 +183,12 @@ def parse_date_time(date_time_str):
   return None
 
 
-
 class LightroomDb(object):
   
   def __init__(self):
     self.images_df = None
     self.keywords_df = None
+    self.collections_df = None
 
 
 class MergedDbs(object):
@@ -199,6 +196,7 @@ class MergedDbs(object):
   def __init__(self):
     self.images_df = None
     self.keywords_df = None
+    self.collections_df = None
 
   
 def query_to_data_frame(cursor: Text, query: Text) -> pd.DataFrame:
@@ -234,12 +232,13 @@ def load_db(path: Text):
     lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
 
     lightroom_db.keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
+    lightroom_db.collections_df = query_to_data_frame(cursor, QUERY_COLLECTIONS)
   finally:
     connection.close()
   return lightroom_db
 
 
-def merge_db_images(db1: LightroomDb, db2: LightroomDb):
+def merge_db_images(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
       db2.images_df, how='outer',
@@ -247,14 +246,25 @@ def merge_db_images(db1: LightroomDb, db2: LightroomDb):
   return merged_images_df
 
 
-def merge_db_keywords(db1: LightroomDb, db2: LightroomDb):
+def merge_db_keywords(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('merge_db_keywords')
   merged_keywords_df = db1.keywords_df.merge(
       db2.keywords_df, how='outer',
-      on=['image', 'keyword'],
+      on=[Column.ID_GLOBAL.value, Column.KEYWORD.value],
       suffixes=('_db1', '_db2'),
       indicator='presence')
   return merged_keywords_df
+
+
+def merge_db_collections(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
+  logging.info('merge_db_collections')
+  merged_collections_df = db1.collections_df.merge(
+      db2.collections_df, how='outer',
+      on=[Column.ID_GLOBAL.value, Column.COLLECTION.value],
+      suffixes=('_db1', '_db2'),
+      indicator='presence')
+  return merged_collections_df
+
 
 
 def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
@@ -262,6 +272,7 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
   merged_dbs = MergedDbs()
   merged_dbs.images_df = merge_db_images(db1, db2)
   merged_dbs.keywords_df = merge_db_keywords(db1, db2)
+  merged_dbs.collections_df = merge_db_collections(db1, db2)
   return merged_dbs
   
 
@@ -297,14 +308,14 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore):
   return diff_chunk, value_altered
 
 
-def diff_keywords(merged_keywords_df: pd.DataFrame, rows_to_ignore) -> pd.DataFrame:
+def diff_keywords_or_collections(merged_keywords_df: pd.DataFrame, name_column: Column) -> pd.DataFrame:
   logging.info('diff_keywords')
   missing_columns = set(REPORT_COLUMNS).difference(set(merged_keywords_df))
   assert not missing_columns, missing_columns
   removed = (merged_keywords_df.presence == 'left_only')
   diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
-  diff_chunk[DIFF_TYPE] = 'KEYWORD REMOVED'
-  diff_chunk[VALUE_DB1] = merged_keywords_df.loc[removed, 'keyword']
+  diff_chunk[DIFF_TYPE] = f'REMOVED FROM {name_column.name}'
+  diff_chunk[VALUE_DB1] = merged_keywords_df.loc[removed, name_column.value]
   diff_chunk[VALUE_DB2] = None
   return diff_chunk
 
@@ -319,8 +330,11 @@ def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.Da
     diff_chunk, _ = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
-  keyword_diff_chunk = diff_keywords(merged_dbs.keywords_df, rows_to_ignore=image_removed)
+  keyword_diff_chunk = diff_keywords_or_collections(merged_dbs.keywords_df, name_column=Column.KEYWORD)
   diff_chunks.append(keyword_diff_chunk)
+
+  collection_diff_chunk = diff_keywords_or_collections(merged_dbs.collections_df, name_column=Column.COLLECTION)
+  diff_chunks.append(collection_diff_chunk)
 
   diff_df = pd.concat(objs=diff_chunks, axis='index', ignore_index=True, sort=False)
   diff_df = diff_df.sort_values(by=SORT_COLUMNS)
