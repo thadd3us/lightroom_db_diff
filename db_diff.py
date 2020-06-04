@@ -10,6 +10,7 @@ import enum
 import glob
 import html
 import logging
+import numpy as np
 import os
 import sqlite3
 import urllib
@@ -48,7 +49,11 @@ DEFAULT_CONFIG_JSON = """
   "vacuous_captions": [
     "", 
     "OLYMPUS DIGITAL CAMERA", 
-    "Exif JPEG"
+    "Exif JPEG",
+    "My beautiful picture"
+  ],
+  "ignore_collections": [
+    "quick collection"
   ]
 }
 """
@@ -97,6 +102,7 @@ class Config(dataclasses_json.DataClassJsonMixin):
   report_columns: List[str] = dataclasses.field(default_factory=list)
   sort_columns: List[str] = dataclasses.field(default_factory=list)
   vacuous_captions: Set[str] = dataclasses.field(default_factory=set)
+  ignore_collections: Set[str] = dataclasses.field(default_factory=set)
 
 
 TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
@@ -213,7 +219,7 @@ def parse_date_time(date_time_str: Optional[str]) -> Optional[maya.MayaDT]:
   return None
 
 
-def load_db(path: str) -> LightroomDb:
+def load_db(config: Config, path: str) -> LightroomDb:
   logging.info('load_db, path=%s', path)
   lightroom_db = LightroomDb()
 
@@ -225,22 +231,22 @@ def load_db(path: str) -> LightroomDb:
       lightroom_db.images_df[Column.CAPTURE_TIME.value].map(parse_date_time))
 
     def lat_lon_join(x):
-      if pd.isna(x.iloc[0]) and pd.isna(x.iloc[1]):
+      assert len(x) == 2
+      if pd.isna(x[0]) and pd.isna(x[1]):
         return None
-      return (x.iloc[0], x.iloc[1])
+      return x[0], x[1]
     lightroom_db.images_df[Column.GPS_LOCATION.value] = (
       lightroom_db.images_df[[Column.GPS_LATITUDE.value, Column.GPS_LONGITUDE.value]].apply(
-        lat_lon_join, axis='columns'))
+        lat_lon_join, axis='columns', raw=True))
 
     def image_link(x):
-      filename = os.path.join(*x.values.tolist())
+      filename = os.path.join(*x.tolist())
       escaped = urllib.parse.quote(filename, safe="/")
-      # return f'<a href="file://{urllib.parse.quote(filename, safe="/")}">link</a>'
       return f'file://{escaped}'
 
     lightroom_db.images_df[Column.IMAGE_LINK.value] = (
       lightroom_db.images_df[[Column.ROOT_PATH.value, Column.PATH_FROM_ROOT.value, Column.FILENAME.value]].apply(
-        image_link, axis='columns'))
+        image_link, axis='columns', raw=True))
 
     # Not using the index, just checking integrity.
     lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
@@ -250,6 +256,8 @@ def load_db(path: str) -> LightroomDb:
     lightroom_db.keywords_df = keywords_df
 
     collections_df = query_to_data_frame(cursor, QUERY_COLLECTIONS)
+    collections_df = collections_df[
+      ~collections_df[Column.COLLECTION.value].isin(config.ignore_collections)]
     collections_df = collections_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value, right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
     lightroom_db.collections_df = collections_df
 
@@ -305,6 +313,12 @@ def diff_image_presence(config: Config, merged_images_df) -> Tuple[pd.DataFrame,
   return diff_chunk, image_removed
 
 
+def apply_if_none_null(values: np.ndarray, fn, null_result=None):
+  if pd.isna(values).any():
+    return null_result
+  return fn(values)
+
+
 def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore) -> pd.DataFrame:
   logging.info('diff_column: %s', column)
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
@@ -322,11 +336,10 @@ def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
 
   if column == Column.GPS_LOCATION:
-    def gps_location_diff(s: pd.Series):
-      c1 = s.iloc[0]
-      c2 = s.iloc[1]
-      if pd.isna(c1) and pd.isna(c2):
-        return None
+    def gps_location_diff(s: np.ndarray):
+      assert len(s) == 2
+      c1 = s[0]
+      c2 = s[1]
       if pd.isna(c1) or pd.isna(c2):
         return float('inf')
       for c in c1 + c2:
@@ -334,7 +347,15 @@ def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore
           return float('inf')
       d = geopy.distance.geodesic(c1, c2).meters
       return f'{d} meters'
-    d = diff_chunk[[VALUE_DB2, VALUE_DB1]].apply(gps_location_diff, axis='columns', result_type='reduce')
+    d = diff_chunk[[VALUE_DB1, VALUE_DB2]].apply(apply_if_none_null, args=(gps_location_diff, np.inf),
+                                                 axis='columns', raw=True, result_type='reduce')
+    diff_chunk[VALUE_DELTA] = d
+  elif column == Column.PARSED_CAPTURE_TIME:
+    def time_delta(values: np.ndarray):
+      assert len(values) == 2
+      return f'{(values[1] - values[0]).total_seconds()} seconds'
+    d = diff_chunk[[VALUE_DB1, VALUE_DB2]].apply(apply_if_none_null, args=(time_delta, np.inf),
+                                                 axis='columns', raw=True, result_type='reduce')
     diff_chunk[VALUE_DELTA] = d
   elif pd.api.types.is_numeric_dtype(column_db1):
     diff_chunk[VALUE_DELTA] = diff_chunk[VALUE_DB2] - diff_chunk[VALUE_DB1]
@@ -390,11 +411,11 @@ def diff_catalogs(config: Config, db1: LightroomDb, db2: LightroomDb) -> pd.Data
 
 def diff_catalog_sequence(config: Config, db_file_names: List[str]) -> str:
   assert len(db_file_names) >= 2, db_file_names
-  db2 = load_db(maybe_unzip(db_file_names[0]))
+  db2 = load_db(config, maybe_unzip(db_file_names[0]))
   lines = []
   for i in range(1, len(db_file_names)):
     db1 = db2  # Push the right one to the left.
-    db2 = load_db(maybe_unzip(db_file_names[i]))
+    db2 = load_db(config, maybe_unzip(db_file_names[i]))
     diff_df = diff_catalogs(config, db1, db2)
     lines.append(f'<h1>Compare {i-1} vs {i}</h1>')
     lines.append('<ul>')
