@@ -16,9 +16,10 @@ TEST_CATALOG_FILE_NAMES = [
   'testdata/test_catalogs/test_catalog_02/test_catalog_two_more_photos_and_edits.lrcat',
   'testdata/test_catalogs/test_catalog_03/test_catalog_more_face_tags_gps_edit.lrcat',
 ]
-
-
 TEST_LIGHTROOM_DBS = [db_diff.load_db(db_diff.maybe_unzip(f)) for f in TEST_CATALOG_FILE_NAMES]
+
+
+CONFIG = db_diff.Config.from_json(db_diff.DEFAULT_CONFIG_JSON)
 
 
 class DbDiffTest(unittest.TestCase):
@@ -38,31 +39,31 @@ class DbDiffTest(unittest.TestCase):
     self.assertFalse(UPDATE_GOLDEN_FILES)
 
   def test_sequence(self):
-    html = db_diff.diff_catalog_sequence(TEST_CATALOG_FILE_NAMES)
+    html = db_diff.diff_catalog_sequence(CONFIG, TEST_CATALOG_FILE_NAMES)
     self.check_match('test_sequence.html', html)
 
   def test_01_02(self):
-    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[0], TEST_LIGHTROOM_DBS[1])
+    diff_df = db_diff.diff_catalogs(CONFIG, TEST_LIGHTROOM_DBS[0], TEST_LIGHTROOM_DBS[1])
     actual_csv = diff_df.to_csv(index=False)
     self.check_match('test_01_02.csv', actual_csv)
 
   def test_02_01(self):
-    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[1], TEST_LIGHTROOM_DBS[0])
+    diff_df = db_diff.diff_catalogs(CONFIG, TEST_LIGHTROOM_DBS[1], TEST_LIGHTROOM_DBS[0])
     actual_csv = diff_df.to_csv(index=False)
     self.check_match('test_02_01.csv', actual_csv)
 
   def test_03_02(self):
-    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[2], TEST_LIGHTROOM_DBS[1])
+    diff_df = db_diff.diff_catalogs(CONFIG, TEST_LIGHTROOM_DBS[2], TEST_LIGHTROOM_DBS[1])
     actual_csv = diff_df.to_csv(index=False)
     self.check_match('test_03_02.csv', actual_csv)
 
   def test_03_04(self):
-    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[2], TEST_LIGHTROOM_DBS[3])
+    diff_df = db_diff.diff_catalogs(CONFIG, TEST_LIGHTROOM_DBS[2], TEST_LIGHTROOM_DBS[3])
     actual_csv = diff_df.to_csv(index=False)
     self.check_match('test_03_04.csv', actual_csv)
 
   def test_04_03(self):
-    diff_df = db_diff.diff_catalogs(TEST_LIGHTROOM_DBS[3], TEST_LIGHTROOM_DBS[2])
+    diff_df = db_diff.diff_catalogs(CONFIG, TEST_LIGHTROOM_DBS[3], TEST_LIGHTROOM_DBS[2])
     actual_csv = diff_df.to_csv(index=False)
     self.check_match('test_04_03.csv', actual_csv)
 

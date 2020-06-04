@@ -5,6 +5,7 @@ Example command line:
 python db_diff.py testdata/test_catalogs/test_catalog_*/*.lrcat > z.html
 """
 
+import dataclasses
 import enum
 import glob
 import html
@@ -13,14 +14,46 @@ import os
 import sqlite3
 import urllib
 import zipfile
-from typing import Iterable, List, Optional, Text, Tuple
+from typing import Iterable, List, Optional, Set, Text, Tuple
 
+import dataclasses_json
 import geopy.distance
 import maya
 import pandas as pd
 from absl import app
 from absl import flags
 
+DEFAULT_CONFIG_JSON = """
+{
+  "diff_columns": [
+    "AgLibraryIPTC_caption", 
+    "GPS_LOCATION", 
+    "Adobe_images_rating", 
+    "Adobe_images_colorLabels", 
+    "PARSED_CAPTURE_TIME", 
+    "AgLibraryFile_importHash"
+  ],
+  "report_columns": [
+    "AgLibraryFile_idx_filename_db1",
+    "AgLibraryFolder_pathFromRoot_db1",
+    "AgLibraryRootFolder_absolutePath_db1",
+    "IMAGE_LINK_db1"
+  ],
+  "sort_columns": [
+    "DIFF_TYPE", 
+    "AgLibraryRootFolder_absolutePath_db1", 
+    "AgLibraryFolder_pathFromRoot_db1", 
+    "AgLibraryFile_idx_filename_db1"
+  ], 
+  "vacuous_captions": [
+    "", 
+    "OLYMPUS DIGITAL CAMERA", 
+    "Exif JPEG"
+  ]
+}
+"""
+
+flags.DEFINE_string('config_json', DEFAULT_CONFIG_JSON, 'db_diff config.')
 FLAGS = flags.FLAGS
 
 DB1_SUFFIX = '_db1'
@@ -32,28 +65,10 @@ VALUE_DB2 = 'value' + DB2_SUFFIX
 VALUE_DELTA = 'value_delta'
 
 
-def maybe_unzip(filename: str) -> str:
-  """If a catalog is a zip file, extract to a known cache location."""
-  if not filename.endswith('.zip'):
-    logging.info('Not a zipfile, no need to extract.')
-    return filename
-  filename_without_slash = filename.replace('/', '_')
-  dest_dir = f'/tmp/{filename_without_slash}'
-  if not os.path.exists(dest_dir):
-    logging.info('Extracting to %s', dest_dir)
-    with zipfile.ZipFile(filename) as zf:
-      zf.extractall(dest_dir)
-  else:
-    logging.info('Already extracted.')
-
-  dest_dir_contents = glob.glob(os.path.join(dest_dir, '*.lrcat'))
-  assert len(dest_dir_contents) == 1, dest_dir_contents
-  return os.path.join(dest_dir, dest_dir_contents[0])
-
-
 @enum.unique
 class Column(enum.Enum):
-  ROOT_FILE = 'Adobe_images_rootFile'
+  ID_GLOBAL = 'Adobe_images_id_global'
+  ROOT_FILE = 'Adobe_images_rootFile'  # Pointer to the file index.
 
   FILENAME = 'AgLibraryFile_idx_filename'
   PATH_FROM_ROOT = 'AgLibraryFolder_pathFromRoot'
@@ -62,50 +77,30 @@ class Column(enum.Enum):
 
   GPS_LATITUDE = 'AgHarvestedExifMetadata_gpsLatitude'
   GPS_LONGITUDE = 'AgHarvestedExifMetadata_gpsLongitude'
-
   RATING = 'Adobe_images_rating'
   COLOR_LABELS = 'Adobe_images_colorLabels'
   CAPTURE_TIME = 'Adobe_images_captureTime'
   HASH = 'AgLibraryFile_importHash'
-  ID_GLOBAL = 'Adobe_images_id_global'
-
   CAPTION = 'AgLibraryIPTC_caption'
+
   GPS_LOCATION = 'GPS_LOCATION'
   PARSED_CAPTURE_TIME = 'PARSED_CAPTURE_TIME'
 
+  # Not present for images; just in specific DataFrames.
   KEYWORD = 'AgLibraryKeyword_name'
   COLLECTION = 'AgLibraryCollection_name'
 
 
-DIFF_COLUMNS = [
-  Column.CAPTION,
-  Column.GPS_LOCATION,
-  Column.RATING,
-  Column.COLOR_LABELS,
-  Column.PARSED_CAPTURE_TIME,
-  Column.HASH,
-]
+@dataclasses.dataclass
+class Config(dataclasses_json.DataClassJsonMixin):
+  diff_columns: List[Column] = dataclasses.field(default_factory=list)
+  report_columns: List[str] = dataclasses.field(default_factory=list)
+  sort_columns: List[str] = dataclasses.field(default_factory=list)
+  vacuous_captions: Set[str] = dataclasses.field(default_factory=set)
 
-
-REPORT_COLUMNS = [
-  Column.FILENAME.value + DB1_SUFFIX,
-  Column.PATH_FROM_ROOT.value + DB1_SUFFIX,
-  Column.ROOT_PATH.value + DB1_SUFFIX,
-  Column.IMAGE_LINK.value + DB1_SUFFIX,
-]
-
-# As of
-SORT_COLUMNS = [
-  'DIFF_TYPE',
-  Column.ROOT_PATH.value + DB1_SUFFIX,
-  Column.PATH_FROM_ROOT.value + DB1_SUFFIX,
-  Column.FILENAME.value + DB1_SUFFIX,
-]
-# assert set(SORT_COLUMNS).issubset(set(REPORT_COLUMNS))
-
-VACUOUS_CAPTIONS = {'', 'OLYMPUS DIGITAL CAMERA', 'Exif JPEG'}
 
 TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
+
 
 QUERY_SNIPPET_SELECT_IMAGE_LOCATION = f"""
     0 AS {TABLE_MARKER_PREFIX}Adobe_images,
@@ -300,28 +295,28 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
   return merged_dbs
   
 
-def diff_image_presence(merged_images_df) -> Tuple[pd.DataFrame, pd.Series]:
+def diff_image_presence(config: Config, merged_images_df) -> Tuple[pd.DataFrame, pd.Series]:
   logging.info('diff_image_presence')
   image_removed = pd.isna(merged_images_df[Column.ROOT_FILE.value + DB2_SUFFIX])
-  diff_chunk = merged_images_df.loc[image_removed, REPORT_COLUMNS]
+  diff_chunk = merged_images_df.loc[image_removed, config.report_columns]
   diff_chunk[DIFF_TYPE] = 'PRESENCE'
   diff_chunk[VALUE_DB1] = 'PRESENT'
   diff_chunk[VALUE_DB2] = 'ABSENT'
   return diff_chunk, image_removed
 
 
-def diff_column(merged_images_df, column: Column, rows_to_ignore) -> pd.DataFrame:
+def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore) -> pd.DataFrame:
   logging.info('diff_column: %s', column)
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
   column_db2 = merged_images_df[column.value + DB2_SUFFIX]
   
   # Gate on FLAG?
   rows_to_ignore = rows_to_ignore | pd.isna(column_db1)
-  rows_to_ignore = rows_to_ignore | column_db1.isin(VACUOUS_CAPTIONS)  
+  rows_to_ignore = rows_to_ignore | column_db1.isin(config.vacuous_captions)
   
   value_altered = (column_db1 != column_db2) & ~rows_to_ignore
   
-  diff_chunk = merged_images_df.loc[value_altered, REPORT_COLUMNS]
+  diff_chunk = merged_images_df.loc[value_altered, config.report_columns]
   diff_chunk[DIFF_TYPE] = column.name
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
   diff_chunk[VALUE_DB2] = column_db2[value_altered]
@@ -346,61 +341,61 @@ def diff_column(merged_images_df, column: Column, rows_to_ignore) -> pd.DataFram
   return diff_chunk
 
 
-def diff_keywords_or_collections(merged_keywords_df: pd.DataFrame, name_column: Column) -> pd.DataFrame:
+def diff_keywords_or_collections(config: Config, merged_keywords_df: pd.DataFrame, name_column: Column) -> pd.DataFrame:
   logging.info('diff_keywords')
-  missing_columns = set(REPORT_COLUMNS).difference(set(merged_keywords_df))
+  missing_columns = set(config.report_columns).difference(set(merged_keywords_df))
   assert not missing_columns, missing_columns
   removed = (merged_keywords_df.presence == 'left_only')
-  diff_chunk = merged_keywords_df.loc[removed, REPORT_COLUMNS]
+  diff_chunk = merged_keywords_df.loc[removed, config.report_columns]
   diff_chunk[DIFF_TYPE] = f'REMOVED FROM {name_column.name}'
   diff_chunk[VALUE_DB1] = merged_keywords_df.loc[removed, name_column.value]
   diff_chunk[VALUE_DB2] = None
   return diff_chunk
 
 
-def compute_diff(merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.DataFrame:
+def compute_diff(config: Config, merged_dbs: MergedDbs, diff_columns: Iterable[Column]) -> pd.DataFrame:
   logging.info('compute_diff')
   diff_chunks = []
-  image_removed_diff_chunk, image_removed = diff_image_presence(merged_dbs.images_df)
+  image_removed_diff_chunk, image_removed = diff_image_presence(config, merged_dbs.images_df)
   diff_chunks.append(image_removed_diff_chunk)
   
   for column in diff_columns:
-    diff_chunk = diff_column(merged_dbs.images_df, column, rows_to_ignore=image_removed)
+    diff_chunk = diff_column(config, merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
     
-  keyword_diff_chunk = diff_keywords_or_collections(merged_dbs.keywords_df, name_column=Column.KEYWORD)
+  keyword_diff_chunk = diff_keywords_or_collections(config, merged_dbs.keywords_df, name_column=Column.KEYWORD)
   diff_chunks.append(keyword_diff_chunk)
 
-  collection_diff_chunk = diff_keywords_or_collections(merged_dbs.collections_df, name_column=Column.COLLECTION)
+  collection_diff_chunk = diff_keywords_or_collections(config, merged_dbs.collections_df, name_column=Column.COLLECTION)
   diff_chunks.append(collection_diff_chunk)
 
   diff_df = pd.concat(objs=diff_chunks, axis='index', ignore_index=True, sort=False)
-  diff_df = diff_df.sort_values(by=SORT_COLUMNS)
+  diff_df = diff_df.sort_values(by=config.sort_columns)
 
   column_ordering = [DIFF_TYPE, VALUE_DB1, VALUE_DB2]
   if VALUE_DELTA in diff_df.columns:
     column_ordering.append(VALUE_DELTA)
-  column_ordering += REPORT_COLUMNS
+  column_ordering += config.report_columns
   diff_df = diff_df.loc[:, column_ordering]
   
   return diff_df
  
 
-def diff_catalogs(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
+def diff_catalogs(config: Config, db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('diff_catalogs')
   merged_dbs = compute_merge_dbs(db1, db2)
-  diff_df = compute_diff(merged_dbs, DIFF_COLUMNS)
+  diff_df = compute_diff(config, merged_dbs, config.diff_columns)
   return diff_df
 
 
-def diff_catalog_sequence(db_file_names: List[str]) -> str:
+def diff_catalog_sequence(config: Config, db_file_names: List[str]) -> str:
   assert len(db_file_names) >= 2, db_file_names
   db2 = load_db(maybe_unzip(db_file_names[0]))
   lines = []
   for i in range(1, len(db_file_names)):
     db1 = db2  # Push the right one to the left.
     db2 = load_db(maybe_unzip(db_file_names[i]))
-    diff_df = diff_catalogs(db1, db2)
+    diff_df = diff_catalogs(config, db1, db2)
     lines.append(f'<h1>Compare {i-1} vs {i}</h1>')
     lines.append('<ul>')
     lines.append(f'<li> db1: {db_file_names[i-1]}')
@@ -430,9 +425,29 @@ def diff_catalog_sequence(db_file_names: List[str]) -> str:
   return '\n'.join(lines)
 
 
+def maybe_unzip(filename: str) -> str:
+  """If a catalog is a zip file, extract to a known cache location."""
+  if not filename.endswith('.zip'):
+    logging.info('Not a zipfile, no need to extract.')
+    return filename
+  filename_without_slash = filename.replace('/', '_')
+  dest_dir = f'/tmp/{filename_without_slash}'
+  if not os.path.exists(dest_dir):
+    logging.info('Extracting to %s', dest_dir)
+    with zipfile.ZipFile(filename) as zf:
+      zf.extractall(dest_dir)
+  else:
+    logging.info('Already extracted.')
+
+  dest_dir_contents = glob.glob(os.path.join(dest_dir, '*.lrcat'))
+  assert len(dest_dir_contents) == 1, dest_dir_contents
+  return os.path.join(dest_dir, dest_dir_contents[0])
+
+
 def main(argv) -> None:
+  config = Config.from_json(FLAGS.config_json)
   db_file_names = argv[1:]
-  print(diff_catalog_sequence(db_file_names))
+  print(diff_catalog_sequence(config, db_file_names))
 
 
 if __name__ == '__main__':

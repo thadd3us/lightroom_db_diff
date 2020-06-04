@@ -13,6 +13,7 @@ absl-py = "*"
 plotly-express = "*"
 pytest-watch = "*"
 geopy = "*"
+dataclasses-json = "*"
 
 [requires]
 python_version = "3.7"
