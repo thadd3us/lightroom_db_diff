@@ -10,7 +10,6 @@ import enum
 import glob
 import html
 import logging
-import numpy as np
 import os
 import sqlite3
 import urllib
@@ -20,6 +19,7 @@ from typing import Iterable, List, Optional, Set, Text, Tuple
 import dataclasses_json
 import geopy.distance
 import maya
+import numpy as np
 import pandas as pd
 from absl import app
 from absl import flags
@@ -107,7 +107,6 @@ class Config(dataclasses_json.DataClassJsonMixin):
 
 TABLE_MARKER_PREFIX = 'TABLE_MARKER_'
 
-
 QUERY_SNIPPET_SELECT_IMAGE_LOCATION = f"""
     0 AS {TABLE_MARKER_PREFIX}Adobe_images,
     Adobe_images.*,
@@ -142,7 +141,6 @@ LEFT JOIN AgHarvestedExifMetadata ON AgHarvestedExifMetadata.image = Adobe_image
 ;
 """
 
-
 QUERY_KEYWORDS = f"""
 SELECT
     0 AS {TABLE_MARKER_PREFIX}AgLibraryKeywordImage,
@@ -156,7 +154,6 @@ LEFT JOIN Adobe_images ON Adobe_images.id_local = AgLibraryKeywordImage.image
 LEFT JOIN AgLibraryKeyword ON AgLibraryKeyword.id_local = AgLibraryKeywordImage.tag
 ;
 """
-
 
 QUERY_COLLECTIONS = f"""
 SELECT
@@ -174,7 +171,7 @@ LEFT JOIN AgLibraryCollection ON AgLibraryCollection.id_local = AgLibraryCollect
 
 
 class LightroomDb(object):
-  
+
   def __init__(self):
     self.images_df = None
     self.keywords_df = None
@@ -188,7 +185,7 @@ class MergedDbs(object):
     self.keywords_df = None
     self.collections_df = None
 
-  
+
 def query_to_data_frame(cursor: sqlite3.Cursor, query: Text) -> pd.DataFrame:
   cursor.execute(query)
   rows = cursor.fetchall()
@@ -235,9 +232,10 @@ def load_db(config: Config, path: str) -> LightroomDb:
       if pd.isna(x[0]) and pd.isna(x[1]):
         return None
       return x[0], x[1]
+
     lightroom_db.images_df[Column.GPS_LOCATION.value] = (
       lightroom_db.images_df[[Column.GPS_LATITUDE.value, Column.GPS_LONGITUDE.value]].apply(
-        lat_lon_join, axis='columns', raw=True))
+        apply_if_none_null, args=(tuple, None), axis='columns', raw=True))
 
     def image_link(x):
       filename = os.path.join(*x.tolist())
@@ -252,13 +250,15 @@ def load_db(config: Config, path: str) -> LightroomDb:
     lightroom_db.images_df.set_index(Column.ID_GLOBAL.value, verify_integrity=True)
 
     keywords_df = query_to_data_frame(cursor, QUERY_KEYWORDS)
-    keywords_df = keywords_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value, right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
+    keywords_df = keywords_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value,
+                                    right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
     lightroom_db.keywords_df = keywords_df
 
     collections_df = query_to_data_frame(cursor, QUERY_COLLECTIONS)
     collections_df = collections_df[
       ~collections_df[Column.COLLECTION.value].isin(config.ignore_collections)]
-    collections_df = collections_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value, right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
+    collections_df = collections_df.merge(lightroom_db.images_df, how='left', left_on=Column.ID_GLOBAL.value,
+                                          right_on=Column.ID_GLOBAL.value, suffixes=('', ''))
     lightroom_db.collections_df = collections_df
 
   finally:
@@ -269,28 +269,28 @@ def load_db(config: Config, path: str) -> LightroomDb:
 def merge_db_images(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('merge_db_images')
   merged_images_df = db1.images_df.merge(
-      db2.images_df, how='outer',
-      on=Column.ID_GLOBAL.value, suffixes=('_db1', '_db2'))
+    db2.images_df, how='outer',
+    on=Column.ID_GLOBAL.value, suffixes=('_db1', '_db2'))
   return merged_images_df
 
 
 def merge_db_keywords(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('merge_db_keywords')
   merged_keywords_df = db1.keywords_df.merge(
-      db2.keywords_df, how='outer',
-      on=[Column.ID_GLOBAL.value, Column.KEYWORD.value],
-      suffixes=('_db1', '_db2'),
-      indicator='presence')
+    db2.keywords_df, how='outer',
+    on=[Column.ID_GLOBAL.value, Column.KEYWORD.value],
+    suffixes=('_db1', '_db2'),
+    indicator='presence')
   return merged_keywords_df
 
 
 def merge_db_collections(db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('merge_db_collections')
   merged_collections_df = db1.collections_df.merge(
-      db2.collections_df, how='outer',
-      on=[Column.ID_GLOBAL.value, Column.COLLECTION.value],
-      suffixes=('_db1', '_db2'),
-      indicator='presence')
+    db2.collections_df, how='outer',
+    on=[Column.ID_GLOBAL.value, Column.COLLECTION.value],
+    suffixes=('_db1', '_db2'),
+    indicator='presence')
   return merged_collections_df
 
 
@@ -301,7 +301,7 @@ def compute_merge_dbs(db1: LightroomDb, db2: LightroomDb) -> MergedDbs:
   merged_dbs.keywords_df = merge_db_keywords(db1, db2)
   merged_dbs.collections_df = merge_db_collections(db1, db2)
   return merged_dbs
-  
+
 
 def diff_image_presence(config: Config, merged_images_df) -> Tuple[pd.DataFrame, pd.Series]:
   logging.info('diff_image_presence')
@@ -323,13 +323,13 @@ def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore
   logging.info('diff_column: %s', column)
   column_db1 = merged_images_df[column.value + DB1_SUFFIX]
   column_db2 = merged_images_df[column.value + DB2_SUFFIX]
-  
+
   # Gate on FLAG?
   rows_to_ignore = rows_to_ignore | pd.isna(column_db1)
   rows_to_ignore = rows_to_ignore | column_db1.isin(config.vacuous_captions)
-  
+
   value_altered = (column_db1 != column_db2) & ~rows_to_ignore
-  
+
   diff_chunk = merged_images_df.loc[value_altered, config.report_columns]
   diff_chunk[DIFF_TYPE] = column.name
   diff_chunk[VALUE_DB1] = column_db1[value_altered]
@@ -347,6 +347,7 @@ def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore
           return float('inf')
       d = geopy.distance.geodesic(c1, c2).meters
       return f'{d} meters'
+
     d = diff_chunk[[VALUE_DB1, VALUE_DB2]].apply(apply_if_none_null, args=(gps_location_diff, np.inf),
                                                  axis='columns', raw=True, result_type='reduce')
     diff_chunk[VALUE_DELTA] = d
@@ -354,6 +355,7 @@ def diff_column(config: Config, merged_images_df, column: Column, rows_to_ignore
     def time_delta(values: np.ndarray):
       assert len(values) == 2
       return f'{(values[1] - values[0]).total_seconds()} seconds'
+
     d = diff_chunk[[VALUE_DB1, VALUE_DB2]].apply(apply_if_none_null, args=(time_delta, np.inf),
                                                  axis='columns', raw=True, result_type='reduce')
     diff_chunk[VALUE_DELTA] = d
@@ -379,11 +381,11 @@ def compute_diff(config: Config, merged_dbs: MergedDbs, diff_columns: Iterable[C
   diff_chunks = []
   image_removed_diff_chunk, image_removed = diff_image_presence(config, merged_dbs.images_df)
   diff_chunks.append(image_removed_diff_chunk)
-  
+
   for column in diff_columns:
     diff_chunk = diff_column(config, merged_dbs.images_df, column, rows_to_ignore=image_removed)
     diff_chunks.append(diff_chunk)
-    
+
   keyword_diff_chunk = diff_keywords_or_collections(config, merged_dbs.keywords_df, name_column=Column.KEYWORD)
   diff_chunks.append(keyword_diff_chunk)
 
@@ -398,9 +400,9 @@ def compute_diff(config: Config, merged_dbs: MergedDbs, diff_columns: Iterable[C
     column_ordering.append(VALUE_DELTA)
   column_ordering += config.report_columns
   diff_df = diff_df.loc[:, column_ordering]
-  
+
   return diff_df
- 
+
 
 def diff_catalogs(config: Config, db1: LightroomDb, db2: LightroomDb) -> pd.DataFrame:
   logging.info('diff_catalogs')
@@ -417,9 +419,9 @@ def diff_catalog_sequence(config: Config, db_file_names: List[str]) -> str:
     db1 = db2  # Push the right one to the left.
     db2 = load_db(config, maybe_unzip(db_file_names[i]))
     diff_df = diff_catalogs(config, db1, db2)
-    lines.append(f'<h1>Compare {i-1} vs {i}</h1>')
+    lines.append(f'<h1>Compare {i - 1} vs {i}</h1>')
     lines.append('<ul>')
-    lines.append(f'<li> db1: {db_file_names[i-1]}')
+    lines.append(f'<li> db1: {db_file_names[i - 1]}')
     lines.append(f'<li> db2: {db_file_names[i]}')
     lines.append('</ul>')
 
@@ -441,7 +443,7 @@ def diff_catalog_sequence(config: Config, db_file_names: List[str]) -> str:
     lines.append('<p>')
     lines.append('If the above looks OK, you can remove the left catalog (db1) using:')
     lines.append('<pre>')
-    lines.append(f'rm "{db_file_names[i-1]}"')
+    lines.append(f'rm "{db_file_names[i - 1]}"')
     lines.append('</pre>')
   return '\n'.join(lines)
 
