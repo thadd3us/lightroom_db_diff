@@ -1,3 +1,6 @@
+notebook.ipynb
+
+# Python / IDE stuff.
 /.project
 /.ipynb_checkpoints
 /.pytest_cache
@@ -5,14 +8,13 @@
 __pycache__
 .pydevproject
 
-notebook.ipynb
-
-*.lrprev
+# Lightroom stuff.
 helper.db
 previews.db
-
-.DS_Store
 root-pixels.db
+*.lrprev
 *.lrcat-shm
 *.lrcat-wal
 
+# Mac stuff.
+.DS_Store

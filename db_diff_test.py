@@ -9,9 +9,7 @@ import db_diff
 
 UPDATE_GOLDEN_FILES = False
 
-
 CONFIG = db_diff.Config.from_json(db_diff.DEFAULT_CONFIG_JSON)
-
 
 TEST_CATALOG_FILE_NAMES = [
   'testdata/test_catalogs/test_catalog_00/test_catalog_fresh.lrcat',
@@ -20,8 +18,6 @@ TEST_CATALOG_FILE_NAMES = [
   'testdata/test_catalogs/test_catalog_03/test_catalog_more_face_tags_gps_edit.lrcat',
 ]
 TEST_LIGHTROOM_DBS = [db_diff.load_db(CONFIG, db_diff.maybe_unzip(f)) for f in TEST_CATALOG_FILE_NAMES]
-
-
 
 
 class DbDiffTest(unittest.TestCase):
